@@ -1,0 +1,24 @@
+[Unit]
+Description=SejmBot - Parser transkryptów Sejmu RP
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=60
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/sejmbot
+Environment=PATH=/home/pi/sejmbot/venv/bin
+ExecStart=/home/pi/sejmbot/venv/bin/python scheduler.py --schedule
+StandardOutput=append:/home/pi/sejmbot/logs/systemd.log
+StandardError=append:/home/pi/sejmbot/logs/systemd.log
+
+# Ograniczenia zasobów dla Raspberry Pi
+CPUQuota=50%
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
