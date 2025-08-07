@@ -8,7 +8,6 @@ import hashlib
 import json
 import logging
 import re
-import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, date
 from pathlib import Path
@@ -1897,27 +1896,108 @@ class SejmBot:
             self.logger.warning("⚠️  BRAK numerów posiedzeń na stronie")
 
 
+# Dodaj na końcu pliku sejmbot.py, przed main():
+
+import signal
+import time
+from threading import Event
+
+
+class SejmBotDaemon:
+    """Daemon mode for continuous operation"""
+
+    def __init__(self, config: SejmBotConfig):
+        self.config = config
+        self.logger = config.logger
+        self.stop_event = Event()
+
+        # Interval between runs (in seconds) - 4 hours
+        self.run_interval = 4 * 60 * 60  # 4 hours = 14400 seconds
+
+        # Setup signal handlers
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals"""
+        self.logger.info(f"📡 Otrzymano sygnał {signum}, graceful shutdown...")
+        self.stop_event.set()
+
+    def run_daemon(self):
+        """Main daemon loop"""
+        self.logger.info("🔄 Uruchomiono SejmBot w trybie daemon")
+        self.logger.info(f"⏰ Interval: {self.run_interval / 3600:.1f} godzin")
+
+        # First run immediately
+        self._run_bot_cycle()
+
+        while not self.stop_event.is_set():
+            try:
+                # Wait for interval or stop signal
+                if self.stop_event.wait(timeout=self.run_interval):
+                    # Stop signal received
+                    break
+
+                # Run bot cycle
+                self._run_bot_cycle()
+
+            except Exception as e:
+                self.logger.error(f"❌ Błąd w daemon loop: {e}")
+                # Continue running even if single cycle fails
+                time.sleep(300)  # Wait 5 minutes before retry
+
+        self.logger.info("🛑 Daemon zatrzymany")
+
+    def _run_bot_cycle(self):
+        """Single bot execution cycle"""
+        try:
+            self.logger.info("🚀 Rozpoczynam cykl pobierania...")
+
+            bot = SejmBot(self.config)
+            processed = bot.run()
+
+            if processed > 0:
+                self.logger.info(f"✅ Cykl zakończony: {processed} nowych transkryptów")
+            else:
+                self.logger.info("📋 Cykl zakończony: brak nowych transkryptów")
+
+        except Exception as e:
+            self.logger.error(f"❌ Błąd w cyklu bota: {e}")
+
+
 def main():
     """Punkt wejścia programu"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='SejmBot - Parser transkryptów Sejmu')
+    parser.add_argument('--daemon', action='store_true',
+                        help='Uruchom w trybie daemon (ciągła praca)')
+    args = parser.parse_args()
 
     # Inicjalizacja
     config = SejmBotConfig()
-    bot = SejmBot(config)
 
-    try:
-        # Uruchomienie
-        processed_count = bot.run()
-
-        if processed_count > 0:
-            print(f"\n✅ Sukces! Przetworzono {processed_count} nowych transkryptów")
-        else:
-            print("\n📋 Brak nowych transkryptów do przetworzenia")
-
-    except KeyboardInterrupt:
-        print("\n⏹️  Przerwano przez użytkownika")
-    except Exception as e:
-        print(f"\n❌ Błąd krytyczny: {e}")
-        logging.error(f"Błąd krytyczny: {e}", exc_info=True)
+    if args.daemon:
+        # Tryb daemon
+        daemon = SejmBotDaemon(config)
+        try:
+            daemon.run_daemon()
+        except KeyboardInterrupt:
+            print("\n⏹️  Daemon przerwany przez użytkownika")
+    else:
+        # Pojedyncze uruchomienie
+        bot = SejmBot(config)
+        try:
+            processed_count = bot.run()
+            if processed_count > 0:
+                print(f"\n✅ Sukces! Przetworzono {processed_count} nowych transkryptów")
+            else:
+                print("\n📋 Brak nowych transkryptów do przetworzenia")
+        except KeyboardInterrupt:
+            print("\n⏹️  Przerwano przez użytkownika")
+        except Exception as e:
+            print(f"\n❌ Błąd krytyczny: {e}")
+            logging.error(f"Błąd krytyczny: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
