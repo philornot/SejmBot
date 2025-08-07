@@ -1,22 +1,23 @@
 # SejmBot - Wymagane biblioteki
-
-# Podstawowe
+# Core dependencies
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
 
-# Parsowanie dokumentów
-pdfplumber>=0.7.0
+# PDF processing
+pdfplumber>=0.9.0
+
+# DOCX processing (optional)
 docx2txt>=0.8
 
-# Opcjonalne - Selenium dla dynamicznych stron
+# Web automation (optional)
 selenium>=4.15.0
 
-# Harmonogramowanie zadań
+# Data processing
+python-dateutil>=2.8.0
+
+# Logging and scheduling (for daemon mode)
 schedule>=1.2.0
 
-# Opcjonalne - dla zaawansowanego harmonogramowania
-APScheduler>=3.10.0
-
-# Narzędzia pomocnicze
-pathlib2>=2.3.7; python_version<"3.4"
+# System monitoring (optional, useful for Pi)
+psutil>=5.9.0

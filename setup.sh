@@ -41,7 +41,7 @@ mkdir -p transkrypty logs
 # Sprawdź instalację
 echo "🧪 Testowanie instalacji..."
 python3 -c "
-import requests, bs4, json, pathlib, logging
+import requests, bs4, json, pathlib, logging, signal, time, threading
 try:
     import pdfplumber
     print('✅ PDF support: OK')
@@ -66,9 +66,20 @@ print('🚀 Instalacja zakończona pomyślnie!')
 echo ""
 echo "✅ Setup zakończony!"
 echo ""
-echo "Aby uruchomić SejmBot:"
-echo "  source venv/bin/activate"
-echo "  python3 sejmbot.py"
+echo "🎯 Sposoby uruchamiania SejmBot:"
 echo ""
-echo "Aby uruchomić w tle:"
-echo "  nohup python3 sejmbot.py > logs/sejmbot.log 2>&1 &"
+echo "1️⃣  Jednorazowe uruchomienie:"
+echo "   source venv/bin/activate"
+echo "   python3 sejmbot.py"
+echo ""
+echo "2️⃣  Tryb daemon (zalecany dla serwera):"
+echo "   source venv/bin/activate"
+echo "   python3 sejmbot.py --daemon"
+echo ""
+echo "3️⃣  W tle (ręcznie):"
+echo "   nohup python3 sejmbot.py --daemon > logs/daemon.log 2>&1 &"
+echo ""
+echo "4️⃣  Jako systemd service (najlepsze dla produkcji):"
+echo "   ./install_daemon.sh  # dla trybu 24/7"
+echo ""
+echo "💡 Dla Raspberry Pi użyj: ./install_rasberry_pi_daemon.sh"
