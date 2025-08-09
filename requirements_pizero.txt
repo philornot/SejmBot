@@ -1,0 +1,30 @@
+# SejmBot Requirements - Pi Zero 2W Optimized
+# Lightweight versions with minimal dependencies
+
+# Core HTTP and web scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Lightweight PDF processing (instead of pdfplumber)
+pypdf>=3.0.0
+
+# Simple text processing (instead of docx2txt)
+# docx2txt>=0.8  # Comment out if causing issues
+
+# Minimal web automation - consider removing if not essential
+# selenium>=4.15.0  # Heavy for Pi Zero - comment out if not needed
+
+# Date utilities
+python-dateutil>=2.8.0
+
+# Scheduling
+schedule>=1.2.0
+
+# System monitoring - lightweight
+psutil>=5.9.0
+
+# Optional: if you need these, uncomment carefully
+# pdfplumber>=0.9.0  # Heavy - use pypdf instead
+# selenium>=4.15.0   # Very heavy for Pi Zero
+# pillow>=9.0.0      # Heavy image processing

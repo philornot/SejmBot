@@ -4,4 +4,4 @@
 *.log
 *.pdf
 *.json
-deploy_docker.sh
+deploy_pi_zero.sh
