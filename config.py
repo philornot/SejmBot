@@ -15,7 +15,7 @@ class SejmBotConfig:
 
     def __init__(self):
         # Podstawowe ustawienia
-        self.user_agent = "SejmBot/2.1 (+https://github.com/sejmbot) Mozilla/5.0 (compatible)"
+        self.user_agent = "SejmBot/2.1 (+https://github.com/philornot/SejmBot) Mozilla/5.0 (compatible)"
         self.output_dir = Path("transkrypty")
         self.logs_dir = Path("logs")
 
