@@ -2,30 +2,25 @@
 """
 SejmBot - parsers.py
 Moduły do parsowania i ekstrakcji tekstu z różnych formatów dokumentów
+Zoptymalizowany dla Raspberry Pi Zero 2 W - używa tylko pypdf zamiast pdfplumber
 """
 
 import io
 import logging
-import os
 import re
-import tempfile
 
 from bs4 import BeautifulSoup
 
 # Importy opcjonalne - sprawdzamy dostępność bibliotek
 try:
-    import pdfplumber
+    import pypdf
 
     PDF_SUPPORT = True
 except ImportError:
     PDF_SUPPORT = False
 
-try:
-    import docx2txt
-
-    DOCX_SUPPORT = True
-except ImportError:
-    DOCX_SUPPORT = False
+# DOCX nie jest obsługiwane w tej wersji (brak docx2txt w requirements)
+DOCX_SUPPORT = False
 
 
 class HTMLParser:
@@ -91,18 +86,18 @@ class HTMLParser:
 
 
 class PDFParser:
-    """Parser dla dokumentów PDF"""
+    """Parser dla dokumentów PDF używający pypdf (lżejszy niż pdfplumber)"""
 
     def __init__(self, logger: logging.Logger):
         self.logger = logger
 
         if not PDF_SUPPORT:
-            self.logger.warning("⚠️  Brak wsparcia dla PDF - zainstaluj: pip install pdfplumber")
+            self.logger.warning("⚠️  Brak wsparcia dla PDF - zainstaluj: pip install pypdf")
 
     def extract_text_from_bytes(self, pdf_bytes: bytes) -> str:
-        """Ekstraktuje tekst z PDF z bajtów z obsługą różnych problemów"""
+        """Ekstraktuje tekst z PDF z bajtów używając pypdf"""
         if not PDF_SUPPORT:
-            self.logger.error("❌ Brak wsparcia dla PDF - zainstaluj: pip install pdfplumber")
+            self.logger.error("❌ Brak wsparcia dla PDF - zainstaluj: pip install pypdf")
             return ""
 
         if not pdf_bytes or len(pdf_bytes) < 100:
@@ -118,27 +113,30 @@ class PDFParser:
             pdf_stream = io.BytesIO(pdf_bytes)
             text_parts = []
 
-            with pdfplumber.open(pdf_stream) as pdf:
-                self.logger.info(f"📄 PDF ma {len(pdf.pages)} stron")
+            # Używamy pypdf zamiast pdfplumber
+            reader = pypdf.PdfReader(pdf_stream)
+            total_pages = len(reader.pages)
 
-                for page_num, page in enumerate(pdf.pages, 1):
-                    try:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text_parts.append(page_text)
+            self.logger.info(f"📄 PDF ma {total_pages} stron")
 
-                        # Pokaż postęp dla dużych PDFów
-                        if page_num % 50 == 0:
-                            self.logger.info(f"📖 Przetworzono {page_num}/{len(pdf.pages)} stron")
+            for page_num, page in enumerate(reader.pages, 1):
+                try:
+                    page_text = page.extract_text()
+                    if page_text and page_text.strip():
+                        text_parts.append(page_text)
 
-                    except Exception as e:
-                        self.logger.warning(f"⚠️  Błąd na stronie {page_num}: {e}")
-                        continue
+                    # Pokaż postęp dla dużych PDFów
+                    if page_num % 50 == 0:
+                        self.logger.info(f"📖 Przetworzono {page_num}/{total_pages} stron")
+
+                except Exception as e:
+                    self.logger.warning(f"⚠️  Błąd na stronie {page_num}: {e}")
+                    continue
 
             full_text = '\n\n'.join(text_parts)
             cleaned_text = TextCleaner.clean_extracted_text(full_text)
 
-            self.logger.info(f"✅ Wyciągnięto {len(cleaned_text):,} znaków z PDF")
+            self.logger.info(f"✅ Wyciągnięto {len(cleaned_text):,} znaków z PDF (pypdf)")
             return cleaned_text
 
         except Exception as e:
@@ -147,60 +145,22 @@ class PDFParser:
 
 
 class DOCXParser:
-    """Parser dla dokumentów DOCX"""
+    """Parser dla dokumentów DOCX - WYŁĄCZONY w tej wersji"""
 
     def __init__(self, logger: logging.Logger):
         self.logger = logger
-
-        if not DOCX_SUPPORT:
-            self.logger.warning("⚠️  Brak wsparcia dla DOCX - zainstaluj: pip install docx2txt")
+        # DOCX nie jest obsługiwane w tej wersji (brak docx2txt w requirements.txt)
+        self.logger.warning("⚠️  Obsługa DOCX wyłączona - nie jest dostępna w requirements.txt")
 
     def extract_text_from_bytes(self, docx_bytes: bytes) -> str:
-        """Ekstraktuje tekst z DOCX z bajtów"""
-        if not DOCX_SUPPORT:
-            self.logger.error("❌ Brak wsparcia dla DOCX - zainstaluj: pip install docx2txt")
-            return ""
-
-        try:
-            # docx2txt wymaga pliku na dysku
-            with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as tmp_file:
-                tmp_file.write(docx_bytes)
-                tmp_file_path = tmp_file.name
-
-            try:
-                text = docx2txt.process(tmp_file_path)
-                cleaned_text = TextCleaner.clean_extracted_text(text) if text else ""
-
-                self.logger.info(f"✅ Wyciągnięto {len(cleaned_text):,} znaków z DOCX")
-                return cleaned_text
-
-            finally:
-                # Usuń plik tymczasowy
-                try:
-                    os.unlink(tmp_file_path)
-                except:
-                    pass
-
-        except Exception as e:
-            self.logger.error(f"❌ Błąd parsowania DOCX z bajtów: {e}")
-            return ""
+        """DOCX nie jest obsługiwane w tej wersji"""
+        self.logger.warning("❌ Obsługa DOCX została wyłączona - użyj PDF lub HTML")
+        return ""
 
     def extract_text_from_file(self, file_path: str) -> str:
-        """Ekstraktuje tekst z pliku DOCX na dysku"""
-        if not DOCX_SUPPORT:
-            self.logger.error("❌ Brak wsparcia dla DOCX - zainstaluj docx2txt")
-            return ""
-
-        try:
-            text = docx2txt.process(file_path)
-            cleaned_text = TextCleaner.clean_extracted_text(text) if text else ""
-
-            self.logger.info(f"✅ Wyciągnięto {len(cleaned_text):,} znaków z DOCX")
-            return cleaned_text
-
-        except Exception as e:
-            self.logger.error(f"❌ Błąd parsowania DOCX {file_path}: {e}")
-            return ""
+        """DOCX nie jest obsługiwane w tej wersji"""
+        self.logger.warning("❌ Obsługa DOCX została wyłączona - użyj PDF lub HTML")
+        return ""
 
 
 class TextCleaner:
@@ -370,7 +330,7 @@ class ContentTypeDetector:
     def detect_from_bytes(self, content_bytes: bytes, url: str = "", content_type: str = "") -> str:
         """
         Wykrywa typ pliku na podstawie jego zawartości
-        Zwraca: 'pdf', 'docx', 'html', 'unknown'
+        Zwraca: 'pdf', 'html', 'unknown' (DOCX usunięte z obsługiwanych typów)
         """
         if not content_bytes:
             return "unknown"
@@ -380,15 +340,10 @@ class ContentTypeDetector:
             self.logger.debug("Wykryto PDF na podstawie magic number")
             return "pdf"
 
-        # DOCX to ZIP z określoną strukturą
+        # DOCX nie jest już obsługiwane - pomiń sprawdzanie
         if content_bytes.startswith(b'PK\x03\x04'):
-            # Sprawdź czy to DOCX (zawiera word/ folder)
-            try:
-                if b'word/' in content_bytes[:2048]:
-                    self.logger.debug("Wykryto DOCX na podstawie struktury ZIP")
-                    return "docx"
-            except:
-                pass
+            self.logger.warning("⚠️  Wykryto plik DOCX, ale obsługa została wyłączona")
+            return "unknown"
 
         # HTML - sprawdź czy zawiera tagi HTML
         try:
@@ -404,7 +359,8 @@ class ContentTypeDetector:
             if url.lower().endswith('.pdf'):
                 return "pdf"
             elif url.lower().endswith(('.docx', '.doc')):
-                return "docx"
+                self.logger.warning(f"⚠️  URL wskazuje na DOCX, ale obsługa została wyłączona: {url}")
+                return "unknown"
             elif url.lower().endswith(('.html', '.htm')):
                 return "html"
 
@@ -412,7 +368,8 @@ class ContentTypeDetector:
             if 'pdf' in content_type.lower():
                 return "pdf"
             elif 'officedocument' in content_type.lower() or 'docx' in content_type.lower():
-                return "docx"
+                self.logger.warning(f"⚠️  Content-Type wskazuje na DOCX, ale obsługa została wyłączona: {content_type}")
+                return "unknown"
             elif 'html' in content_type.lower():
                 return "html"
 
@@ -427,7 +384,7 @@ class UniversalParser:
         self.logger = logger
         self.html_parser = HTMLParser(logger)
         self.pdf_parser = PDFParser(logger)
-        self.docx_parser = DOCXParser(logger)
+        self.docx_parser = DOCXParser(logger)  # Wyłączone, ale pozostawione dla kompatybilności
         self.detector = ContentTypeDetector(logger)
         self.validator = TextValidator(logger)
 
@@ -452,7 +409,8 @@ class UniversalParser:
             text = self.pdf_parser.extract_text_from_bytes(content_bytes)
 
         elif file_type == "docx":
-            text = self.docx_parser.extract_text_from_bytes(content_bytes)
+            self.logger.warning("⚠️  DOCX nie jest obsługiwane w tej wersji")
+            text = self.docx_parser.extract_text_from_bytes(content_bytes)  # Zwróci pusty string
 
         elif file_type == "html":
             try:
@@ -494,16 +452,20 @@ class ParsingManager:
         missing = []
 
         if not PDF_SUPPORT:
-            missing.append("pdfplumber (dla PDF)")
+            missing.append("pypdf (dla PDF)")
 
-        if not DOCX_SUPPORT:
-            missing.append("docx2txt (dla DOCX)")
+        # DOCX zawsze brakuje w tej wersji
+        missing.append("docx2txt (dla DOCX) - wyłączone w tej wersji")
 
         if missing:
-            self.logger.warning(f"⚠️  Brakujące biblioteki: {', '.join(missing)}")
-            self.logger.info("💡 Zainstaluj: pip install pdfplumber docx2txt")
-        else:
-            self.logger.info("✅ Wszystkie biblioteki parsujące dostępne")
+            self.logger.warning(f"⚠️  Brakujące/wyłączone biblioteki: {', '.join(missing)}")
+            self.logger.info("💡 Zainstaluj dla PDF: pip install pypdf")
+            self.logger.info("💡 DOCX nie jest obsługiwane w wersji Raspberry Pi")
+
+        if PDF_SUPPORT:
+            self.logger.info("✅ pypdf dostępne - obsługa PDF włączona")
+
+        self.logger.info("✅ BeautifulSoup dostępne - obsługa HTML włączona")
 
     def parse_file_content(self, content_bytes: bytes, url: str = "",
                            expected_type: str = "") -> tuple[str, str]:
@@ -528,7 +490,7 @@ class ParsingManager:
         """Zwraca statystyki dostępności parserów"""
         return {
             'pdf_support': PDF_SUPPORT,
-            'docx_support': DOCX_SUPPORT,
+            'docx_support': DOCX_SUPPORT,  # Zawsze False w tej wersji
             'html_support': True,  # BeautifulSoup zawsze dostępne
             'missing_dependencies': self._get_missing_dependencies()
         }
@@ -538,9 +500,9 @@ class ParsingManager:
         missing = []
 
         if not PDF_SUPPORT:
-            missing.append("pdfplumber")
+            missing.append("pypdf")
 
-        if not DOCX_SUPPORT:
-            missing.append("docx2txt")
+        # DOCX celowo wyłączone
+        missing.append("docx2txt (wyłączone w tej wersji)")
 
         return missing

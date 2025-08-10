@@ -4,10 +4,10 @@ SejmBot - downloader.py
 Moduł do pobierania plików z internetu z obsługą retry, alternative URLs i error handling
 """
 
-import time
 import logging
+import time
 from typing import Optional, Tuple, List
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import requests
 from requests.exceptions import RequestException, Timeout, ConnectionError
@@ -205,16 +205,15 @@ class FileDownloader:
         return None
 
     def _parse_pdf_bytes(self, pdf_bytes: bytes, source_url: str) -> str:
-        """Ekstraktuje tekst z PDF z bajtów"""
+        """Ekstraktuje tekst z PDF z bajtów używając pypdf"""
         try:
-            import pdfplumber
+            import pypdf
             import io
 
             if not pdf_bytes or len(pdf_bytes) < 100:
                 self.logger.error("❌ PDF jest pusty lub uszkodzony")
                 return ""
 
-            # Sprawdź czy to rzeczywiście PDF
             if not pdf_bytes.startswith(b'%PDF-'):
                 self.logger.error("❌ Plik nie jest prawidłowym PDF")
                 return ""
@@ -222,71 +221,44 @@ class FileDownloader:
             pdf_stream = io.BytesIO(pdf_bytes)
             text_parts = []
 
-            with pdfplumber.open(pdf_stream) as pdf:
-                self.logger.info(f"📄 PDF ma {len(pdf.pages)} stron")
+            # Używamy pypdf zamiast pdfplumber
+            reader = pypdf.PdfReader(pdf_stream)
+            total_pages = len(reader.pages)
+            self.logger.info(f"📄 PDF ma {total_pages} stron")
 
-                for page_num, page in enumerate(pdf.pages, 1):
-                    try:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text_parts.append(page_text)
+            for page_num, page in enumerate(reader.pages, 1):  # Logika pętli pozostaje ta sama
+                try:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text_parts.append(page_text)
 
-                        # Pokaż postęp dla dużych PDFów
-                        if page_num % 50 == 0:
-                            self.logger.info(f"📖 Przetworzono {page_num}/{len(pdf.pages)} stron")
+                    if page_num % 50 == 0:
+                        self.logger.info(f"📖 Przetworzono {page_num}/{total_pages} stron")
 
-                    except Exception as e:
-                        self.logger.warning(f"⚠️  Błąd na stronie {page_num}: {e}")
-                        continue
+                except Exception as e:
+                    self.logger.warning(f"⚠️  Błąd na stronie {page_num}: {e}")
+                    continue
 
             full_text = '\n\n'.join(text_parts)
             cleaned_text = self._clean_extracted_text(full_text)
 
-            self.logger.info(f"✅ Wyciągnięto {len(cleaned_text):,} znaków z PDF")
+            self.logger.info(f"✅ Wyciągnięto {len(cleaned_text):,} znaków z PDF (pypdf)")
             return cleaned_text
 
         except ImportError:
-            self.logger.error("❌ Brak wsparcia dla PDF - zainstaluj: pip install pdfplumber")
+            self.logger.error("❌ Brak wsparcia dla PDF - zainstaluj: pip install pypdf")
             return ""
         except Exception as e:
             self.logger.error(f"❌ Błąd parsowania PDF: {e}")
             return ""
 
     def _parse_docx_bytes(self, docx_bytes: bytes, source_url: str) -> str:
-        """Ekstraktuje tekst z DOCX z bajtów"""
-        try:
-            import docx2txt
-            import tempfile
-            import os
-
-            if not docx_bytes or len(docx_bytes) < 100:
-                self.logger.error("❌ DOCX jest pusty lub uszkodzony")
-                return ""
-
-            # docx2txt wymaga pliku na dysku
-            with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as tmp_file:
-                tmp_file.write(docx_bytes)
-                tmp_file_path = tmp_file.name
-
-            try:
-                text = docx2txt.process(tmp_file_path)
-                cleaned_text = self._clean_extracted_text(text) if text else ""
-
-                self.logger.info(f"✅ Wyciągnięto {len(cleaned_text):,} znaków z DOCX")
-                return cleaned_text
-            finally:
-                # Usuń plik tymczasowy
-                try:
-                    os.unlink(tmp_file_path)
-                except:
-                    pass
-
-        except ImportError:
-            self.logger.error("❌ Brak wsparcia dla DOCX - zainstaluj: pip install docx2txt")
-            return ""
-        except Exception as e:
-            self.logger.error(f"❌ Błąd parsowania DOCX: {e}")
-            return ""
+        """
+        Ekstraktuje tekst z DOCX z bajtów — WYŁĄCZONE
+        :deprecated: Ta funkcja jest przestarzała, obsługa DOCX została usunięta.
+        """
+        self.logger.warning("⚠️  Obsługa DOCX została wyłączona w tej wersji. Użyj PDF lub HTML.")
+        return ""
 
     def _parse_html_text(self, html_content: str) -> str:
         """Ekstraktuje tekst z HTML"""
