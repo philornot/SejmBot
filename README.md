@@ -1,134 +1,168 @@
 # SejmBot - Parser transkryptów Sejmu RP
 
-Bot do automatycznego pobierania i parsowania stenogramów z posiedzeń Sejmu Rzeczypospolitej Polskiej.
+🤖 Automatyczny bot do pobierania i parsowania stenogramów z posiedzeń Sejmu Rzeczypospolitej Polskiej.
 
-## Co to robi
+## 🎯 Co robi
 
-- Automatycznie pobiera transkrypty z najnowszych posiedzeń Sejmu
-- Parsuje PDFy i HTML do czytelnego tekstu  
-- Zapisuje wszystko w strukturze folderów `kadencja_X/rok/`
-- Nie pobiera dwukrotnie tych samych plików
-- Obsługuje kadencje 6-10 (2007-2025)
+- Pobiera transkrypty z najnowszych posiedzeń Sejmu
+- Parsuje PDFy i HTML do czystego tekstu
+- Zapisuje w strukturze `kadencja_X/rok/`
+- Nie pobiera duplikatów
+- Działa 24/7 w tle (co 4 godziny)
+- Optymalizowany dla Raspberry Pi Zero 2W
 
-## Wymagania
-
-```bash
-pip install requests beautifulsoup4 pdfplumber
-```
-
-Opcjonalnie (dla DOCX i dynamicznych stron):
-```bash  
-pip install docx2txt selenium
-```
-
-## Użycie
+## ⚡ Szybki start
 
 ```bash
-# Pojedyncze uruchomienie
-python sejmbot.py
+# Pobierz kod
+git clone https://github.com/philornot/SejmBot
+cd sejmbot
 
-# Tryb daemon (działa w tle, sprawdza co 4h)
-python sejmbot.py --daemon
+# Uruchom setup (robi wszystko automatycznie)
+./setup.sh
+
+# Test ręczny
+./venv/bin/python sejmbot.py
 ```
 
-## Struktura plików
+**Gotowe!** Bot działa automatycznie co 4 godziny.
+
+## 📋 Wymagania
+
+- **Python 3.7+**
+- **50MB wolnego miejsca** (na kod i cache)
+- **Dostęp do internetu**
+
+### Testowane systemy
+
+- ✅ Raspberry Pi Zero 2W (Raspberry Pi OS)
+- ✅ Ubuntu 20.04+
+- ✅ Debian 11+
+- ✅ macOS 12+
+
+## 📂 Struktura plików
 
 ```
-transkrypty/
-├── kadencja_10/
-│   └── 2024/
-│       ├── json/           # Transkrypty jako JSON
-│       │   └── posiedzenie_039_a_XYZ123.json
-│       ├── pdf/            # Oryginalne PDFy
-│       │   └── posiedzenie_039_a_XYZ123.pdf  
-│       └── index.json      # Indeks wszystkich sesji
-├── logs/
-│   └── sejmbot_20250109.log
-└── processed_sessions.json  # Lista już przetworzonych
+sejmbot/
+├── sejmbot.py           # Główny bot (twój kod)
+├── transkrypty/         # Pobrane stenogramy
+│   └── kadencja_10/
+│       └── 2024/
+│           ├── json/    # JSON z tekstem
+│           └── pdf/     # Oryginalne PDFy
+├── logs/               # Logi działania
+│   ├── sejmbot_2025*.log
+│   └── cron.log
+└── venv/               # Środowisko Python
 ```
 
-## Przykład danych wyjściowych
+## 🔧 Zarządzanie
 
-Każdy plik JSON zawiera:
+```bash
+# Status harmonogramu
+crontab -l
+
+# Logi na żywo  
+tail -f logs/sejmbot_$(date +%Y%m%d).log
+
+# Ręczne uruchomienie
+./venv/bin/python sejmbot.py
+
+# Zatrzymanie automatyki
+crontab -r
+```
+
+## 📊 Przykład danych wyjściowych
 
 ```json
 {
   "session_id": "10_20241218_a1b2c3d4",
   "meeting_number": 39,
-  "day_letter": "a", 
   "date": "2024-12-18",
-  "title": "Posiedzenie nr 39 (a) - 18 grudnia 2024 (środa)",
+  "title": "Posiedzenie nr 39 (a) - 18 grudnia 2024",
   "transcript_text": "Stenogram z posiedzenia...",
-  "text_length": 45678,
   "word_count": 8901,
   "kadencja": 10,
-  "processing_info": {
-    "bot_version": "2.0",
-    "processed_at": "2025-01-09T15:30:00",
-    "original_pdf_available": true
-  }
+  "processed_at": "2025-01-09T15:30:00"
 }
 ```
 
-## Konfiguracja
+## 🍓 Raspberry Pi Zero 2W
 
-Bot automatycznie:
-- Konfiguruje User-Agent: `SejmBot/2.1`
-- Czeka 3s między requestami (żeby nie obciążać serwera)
-- Retry przy błędach połączenia (4 próby)
-- Waliduje czy wyciągnięty tekst to rzeczywiście stenogram
+Bot jest **zoptymalizowany dla Pi Zero**:
 
-## Problemy z którymi bot sobie radzi
+- Zużywa ~30MB RAM
+- Minimalne obciążenie CPU
+- Automatyczne optymalizacje systemowe
+- Bezpieczne dla karty SD
 
-- Serwer `orka2.sejm.gov.pl` często nie odpowiada → automatyczne retry
-- PDFy z błędami → próbuje wyciągnąć tyle tekstu ile się da
-- Zmiana struktury strony → używa wielu selektorów CSS jako fallback  
-- Duplikaty → sprawdza hash treści
-- Uszkodzone pliki z poprzednich wersji → automatyczne czyszczenie
-
-## Statystyki po uruchomieniu
-
-```
-📊 PODSUMOWANIE DZIAŁANIA BOTA
-═══════════════════════════════
-🔍 Znalezionych dni posiedzeń:  127
-⏭️  Już przetworzonych:         89
-✅ Nowo przetworzonych:         23  
-❌ Nieudanych:                  15
-🎯 Wskaźnik sukcesu:            60.5%
+```bash
+# Monitoring na Pi
+free -h                    # RAM
+df -h                      # Miejsce na dysku  
+vcgencmd measure_temp      # Temperatura
 ```
 
-## Techniczne detale
+## 🔍 Jak to działa
 
-- **Parsowanie PDF**: `pdfplumber` (bez OCR)
-- **HTML**: `BeautifulSoup` z selekcją zawartości
-- **Retry logic**: Exponential backoff przy błędach
-- **Walidacja**: Sprawdza czy tekst zawiera słowa kluczowe Sejmu
-- **Memory safe**: Nie używa localStorage/sessionStorage  
+1. **Skanowanie:** Bot odwiedza stronę Sejmu co 4h
+2. **Wykrywanie:** Szuka nowych posiedzeń
+3. **Pobieranie:** Ściąga PDFy/HTML
+4. **Parsowanie:** Wyciąga czysty tekst
+5. **Zapis:** Strukturyzuje jako JSON + archiwum PDF
+6. **Logowanie:** Zapisuje co się działo
 
-## Dla programistów
+## 📚 Użyte biblioteki
 
-Główne klasy:
-- `SejmBotConfig` - konfiguracja URL-i, selektorów, wzorców
-- `SejmBot` - główna logika scrapowania  
-- `SejmSession` - dataclass reprezentująca jedno posiedzenie
+| Biblioteka        | Przeznaczenie           |
+|-------------------|-------------------------|
+| `requests`        | Pobieranie stron/plików |
+| `beautifulsoup4`  | Parsowanie HTML         |
+| `lxml`            | Szybkie parsowanie XML  |
+| `pypdf`           | Odczyt PDF (lekki)      |
+| `python-dateutil` | Obsługa dat             |
 
-Dodawanie nowej kadencji:
-```python
-config.kadencje[11] = {
-    'base_url': 'https://www.sejm.gov.pl/Sejm11.nsf/',
-    'stenogramy_url': 'https://www.sejm.gov.pl/Sejm11.nsf/stenogramy.xsp', 
-    'pdf_server': 'https://orka2.sejm.gov.pl/StenoInter11.nsf/',
-    'lata': list(range(2025, 2030))
-}
+## 🚨 Rozwiązywanie problemów
+
+### Bot nie pobiera nowych transkryptów
+
+```bash
+# Sprawdź logi
+tail -20 logs/sejmbot_$(date +%Y%m%d).log
+
+# Test ręczny
+./venv/bin/python sejmbot.py
 ```
 
-## Limitacje
+### Brak miejsca na Pi
 
-- Nie robi OCR (jeśli PDF to zeskanowany obraz, nie wyciągnie tekstu)
-- Skupia się na stenogramach, nie pobiera innych dokumentów
-- Czasem serwery Sejmu nie działają - wtedy trzeba uruchomić ponownie
+```bash
+# Wyczyść stare logi (starsze niż 7 dni)
+find logs/ -name "*.log" -mtime +7 -delete
 
-## Licencja  
+# Wyczyść stare PDFy (opcjonalnie)
+find transkrypty/ -name "*.pdf" -mtime +30 -delete
+```
 
-Transkrypty Sejmu są publiczne. Bot używa ich zgodnie z przeznaczeniem.
+### Serwer Sejmu nie odpowiada
+
+**To normalne.** Bot automatycznie powtarza próby (4x z odstępami).
+
+## 🎯 Statystyki
+
+Po uruchomieniu bot pokazuje:
+
+```
+📊 PODSUMOWANIE
+═══════════════
+🔍 Znalezione posiedzenia: 127
+✅ Nowo pobrane:           23  
+❌ Błędy:                  15
+🎯 Wskaźnik sukcesu:       60.5%
+```
+
+## 📄 Licencja
+
+Stenogramy Sejmu są **publicznie dostępne**. Bot używa ich zgodnie z przeznaczeniem.
+
+Kod bota jest na licencji MIT.

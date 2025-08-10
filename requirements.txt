@@ -1,23 +1,12 @@
-# SejmBot - Wymagane biblioteki
-# Core dependencies
+# SejmBot - Minimalne zależności (pod RPi Zero)
+
+# Core HTTP i web scraping
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
 
-# PDF processing
-pdfplumber>=0.9.0
+# Lekka obsługa PDF
+pypdf>=3.0.0
 
-# DOCX processing (optional)
-docx2txt>=0.8
-
-# Web automation (optional)
-selenium>=4.15.0
-
-# Data processing
+# Narzędzia do dat
 python-dateutil>=2.8.0
-
-# Logging and scheduling (for daemon mode)
-schedule>=1.2.0
-
-# System monitoring (optional, useful for Pi)
-psutil>=5.9.0
