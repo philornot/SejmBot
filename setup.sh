@@ -92,7 +92,7 @@ fi
 
 # Test uruchomienia
 echo "🚀 Test uruchomienia..."
-if timeout 30 ./venv/bin/python sejmbot.py --test 2>/dev/null; then
+if timeout 30 ./venv/bin/python main.py --test 2>/dev/null; then
     echo "✅ SejmBot działa poprawnie"
 else
     echo "⚠️  Test nieudany, ale to może być OK (brak --test w bocie)"

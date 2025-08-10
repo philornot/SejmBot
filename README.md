@@ -22,7 +22,7 @@ cd sejmbot
 ./setup.sh
 
 # Test ręczny
-./venv/bin/python sejmbot.py
+./venv/bin/python main.py
 ```
 
 **Gotowe!** Bot działa automatycznie co 4 godziny.
@@ -44,7 +44,7 @@ cd sejmbot
 
 ```
 sejmbot/
-├── sejmbot.py           # Główny bot (twój kod)
+├── main.py           # Główny bot (twój kod)
 ├── transkrypty/         # Pobrane stenogramy
 │   └── kadencja_10/
 │       └── 2024/
@@ -66,7 +66,7 @@ crontab -l
 tail -f logs/sejmbot_$(date +%Y%m%d).log
 
 # Ręczne uruchomienie
-./venv/bin/python sejmbot.py
+./venv/bin/python main.py
 
 # Zatrzymanie automatyki
 crontab -r
@@ -131,7 +131,7 @@ vcgencmd measure_temp      # Temperatura
 tail -20 logs/sejmbot_$(date +%Y%m%d).log
 
 # Test ręczny
-./venv/bin/python sejmbot.py
+./venv/bin/python main.py
 ```
 
 ### Brak miejsca na Pi
