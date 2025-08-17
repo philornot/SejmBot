@@ -1,78 +1,32 @@
 """
-Kolorowy system logowania dla SejmBot Detektora
+Główna klasa Logger dla SejmBot Detektora
 """
 import sys
-from enum import Enum
 
-
-class Colors:
-    """Kody kolorów ANSI dla terminala"""
-    # Kolory tekstu
-    RED = '\033[91m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    MAGENTA = '\033[95m'
-    CYAN = '\033[96m'
-    WHITE = '\033[97m'
-    GRAY = '\033[90m'
-
-    # Kolory tła
-    BG_RED = '\033[101m'
-    BG_GREEN = '\033[102m'
-    BG_YELLOW = '\033[103m'
-    BG_BLUE = '\033[104m'
-
-    # Formatowanie
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    UNDERLINE = '\033[4m'
-
-    # Reset
-    RESET = '\033[0m'
-
-    @classmethod
-    def strip_colors(cls, text: str) -> str:
-        """Usuwa kody kolorów z tekstu"""
-        import re
-        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-        return ansi_escape.sub('', text)
-
-
-class LogLevel(Enum):
-    """Poziomy logowania"""
-    DEBUG = ("DEBUG", Colors.GRAY)
-    INFO = ("INFO", Colors.WHITE)
-    SUCCESS = ("SUCCESS", Colors.GREEN)
-    WARNING = ("WARNING", Colors.YELLOW)
-    ERROR = ("ERROR", Colors.RED)
-    CRITICAL = ("CRITICAL", Colors.BG_RED + Colors.WHITE)
+from SejmBotDetektor.utils.colors import Colors
+from SejmBotDetektor.utils.log_levels import LogLevel
 
 
 class Logger:
-    """Kolorowy logger dla aplikacji"""
+    """Kolorowy logger dla aplikacji z obsługą palet"""
 
-    def __init__(self, name: str = "SejmBot", enable_colors: bool = True):
+    def __init__(self, name: str = "SejmBot", enable_colors: bool = True, palette: str = "default"):
         self.name = name
-        self.enable_colors = enable_colors and self._supports_color()
+        self.enable_colors = enable_colors and Colors.supports_color()
         self.min_level = LogLevel.INFO
+        Colors.set_palette(palette)
 
-    def _supports_color(self) -> bool:
-        """Sprawdza czy terminal obsługuje kolory"""
-        # Windows
-        if sys.platform.startswith('win'):
-            try:
-                import colorama
-                colorama.init()
-                return True
-            except ImportError:
-                # Próbujemy włączyć obsługę ANSI w Windows 10+
-                import os
-                os.system('color')
-                return True
+    def set_palette(self, palette_name: str):
+        """Ustawia paletę kolorów"""
+        return Colors.set_palette(palette_name)
 
-        # Unix/Linux/macOS
-        return hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
+    def get_available_palettes(self):
+        """Zwraca dostępne palety kolorów"""
+        return Colors.get_available_palettes()
+
+    def get_current_palette(self):
+        """Zwraca nazwę aktualnej palety"""
+        return Colors.get_current_palette_name()
 
     def set_level(self, level: LogLevel):
         """Ustawia minimalny poziom logowania"""
@@ -80,13 +34,28 @@ class Logger:
 
     def _should_log(self, level: LogLevel) -> bool:
         """Sprawdza czy wiadomość powinna być zalogowana"""
-        levels_order = [LogLevel.DEBUG, LogLevel.INFO, LogLevel.SUCCESS,
-                        LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL]
-        return levels_order.index(level) >= levels_order.index(self.min_level)
+        return level >= self.min_level
+
+    def _get_level_color(self, level: LogLevel) -> str:
+        """Pobiera kolor dla danego poziomu logowania"""
+        if level.value == "DEBUG":
+            return Colors.get_debug_color()
+        elif level.value == "INFO":
+            return Colors.get_info_color()
+        elif level.value == "SUCCESS":
+            return Colors.get_success_color()
+        elif level.value == "WARNING":
+            return Colors.get_warning_color()
+        elif level.value == "ERROR":
+            return Colors.get_error_color()
+        elif level.value == "CRITICAL":
+            return Colors.get_critical_color()
+        else:
+            return Colors.get_info_color()
 
     def _format_message(self, level: LogLevel, message: str, prefix: str = None) -> str:
         """Formatuje wiadomość z kolorami"""
-        level_name, color = level.value
+        level_name = level.value
 
         if not self.enable_colors:
             if prefix:
@@ -94,8 +63,9 @@ class Logger:
             return f"[{self.name}] [{level_name}] {message}"
 
         # Kolorowa wersja
-        level_colored = f"{color}[{level_name}]{Colors.RESET}"
-        name_colored = f"{Colors.BOLD}{Colors.CYAN}[{self.name}]{Colors.RESET}"
+        level_color = self._get_level_color(level)
+        level_colored = f"{level_color}[{level_name}]{Colors.RESET}"
+        name_colored = f"{Colors.get_app_name_color()}[{self.name}]{Colors.RESET}"
 
         if prefix:
             prefix_colored = f"{Colors.BOLD}{prefix}{Colors.RESET}"
@@ -149,8 +119,9 @@ class Logger:
             return
 
         # Kolorowa wersja
-        separator = f"{Colors.BLUE}{'=' * (len(message) + 4)}{Colors.RESET}"
-        header_text = f"{Colors.BOLD}{Colors.BLUE}  {message}  {Colors.RESET}"
+        header_color = Colors.get_header_color()
+        separator = f"{header_color}{'=' * (len(message) + 4)}{Colors.RESET}"
+        header_text = f"{header_color}  {message}  {Colors.RESET}"
 
         print(f"\n{separator}")
         print(header_text)
@@ -162,7 +133,8 @@ class Logger:
             print(f"\n--- {message} ---")
             return
 
-        section_text = f"{Colors.BOLD}{Colors.CYAN}--- {message} ---{Colors.RESET}"
+        section_color = Colors.get_section_color()
+        section_text = f"{section_color}--- {message} ---{Colors.RESET}"
         print(f"\n{section_text}")
 
     def progress(self, current: int, total: int, description: str = ""):
@@ -179,8 +151,11 @@ class Logger:
             return
 
         # Kolorowy pasek
-        filled = f"{Colors.GREEN}█{Colors.RESET}" * filled_length
-        empty = f"{Colors.GRAY}-{Colors.RESET}" * (30 - filled_length)
+        fill_color = Colors.get_progress_fill_color()
+        empty_color = Colors.get_progress_empty_color()
+
+        filled = f"{fill_color}█{Colors.RESET}" * filled_length
+        empty = f"{empty_color}-{Colors.RESET}" * (30 - filled_length)
         percentage_text = f"{Colors.BOLD}{percentage:.1f}%{Colors.RESET}"
 
         print(f"\r[{filled}{empty}] {percentage_text} {description}", end='', flush=True)
@@ -195,7 +170,8 @@ class Logger:
             print("-" * (sum(len(h) for h in headers) + 3 * (len(headers) - 1)))
             return
 
-        colored_headers = [f"{Colors.BOLD}{Colors.YELLOW}{h}{Colors.RESET}" for h in headers]
+        header_color = Colors.get_table_header_color()
+        colored_headers = [f"{header_color}{h}{Colors.RESET}" for h in headers]
         print(" | ".join(colored_headers))
 
         separator = f"{Colors.GRAY}{'-' * (sum(len(h) for h in headers) + 3 * (len(headers) - 1))}{Colors.RESET}"
@@ -208,7 +184,8 @@ class Logger:
             return
 
         # Pierwszy element wyróżniony
-        colored_values = [f"{Colors.BOLD}{Colors.CYAN}{values[0]}{Colors.RESET}"]
+        highlight_color = Colors.get_table_highlight_color()
+        colored_values = [f"{highlight_color}{values[0]}{Colors.RESET}"]
         colored_values.extend(str(v) for v in values[1:])
         print(" | ".join(colored_values))
 
@@ -219,7 +196,7 @@ class Logger:
             return
 
         if key_color is None:
-            key_color = Colors.MAGENTA
+            key_color = Colors.get_key_color()
 
         key_colored = f"{Colors.BOLD}{key_color}{key}{Colors.RESET}"
         print(f"{key_colored}: {value}")
@@ -232,12 +209,93 @@ class Logger:
             print(f"{indent}{bullet} {item}")
             return
 
-        bullet_colored = f"{Colors.BLUE}{bullet}{Colors.RESET}"
+        bullet_color = Colors.get_list_bullet_color()
+        bullet_colored = f"{bullet_color}{bullet}{Colors.RESET}"
         print(f"{indent}{bullet_colored} {item}")
+
+    def palette_demo(self):
+        """Demonstracja aktualnej palety kolorów"""
+        current_palette = self.get_current_palette()
+        self.header(f"Demonstracja palety: {current_palette}")
+
+        # Poziomy logowania
+        self.section("Poziomy logowania")
+        self.debug("To jest wiadomość debug")
+        self.info("To jest wiadomość informacyjna")
+        self.success("To jest wiadomość o sukcesie")
+        self.warning("To jest ostrzeżenie")
+        self.error("To jest błąd")
+        self.critical("To jest błąd krytyczny")
+
+        # Demonstracja z różnymi kolorami wartości (kompatybilność z istniejącym kodem)
+        self.section("Pary klucz-wartość (styl main.py)")
+        self.keyvalue("Plik PDF", "transkrypt_sejmu.pdf", Colors.CYAN)
+        self.keyvalue("Minimalny próg pewności", "0.3", Colors.YELLOW)
+        self.keyvalue("Maksymalna liczba fragmentów", "20", Colors.BLUE)
+        self.keyvalue("Kontekst słów", "25/25", Colors.MAGENTA)
+        self.keyvalue("Tryb debugowania", "WŁĄCZONY", Colors.GREEN)
+
+        # Tabela
+        self.section("Tabela")
+        self.table_header(["Kolumna 1", "Kolumna 2", "Kolumna 3"])
+        self.table_row(["Wiersz 1A", "Wiersz 1B", "Wiersz 1C"], highlight_first=True)
+        self.table_row(["Wiersz 2A", "Wiersz 2B", "Wiersz 2C"])
+
+        # Lista
+        self.section("Lista")
+        self.list_item("Element 1")
+        self.list_item("Element 2 zagnieżdżony", level=1)
+        self.list_item("Element 3 głęboko zagnieżdżony", level=2)
+
+        # Pasek postępu
+        self.section("Pasek postępu")
+        for i in range(0, 101, 25):
+            self.progress(i, 100, f"Ładowanie... {i}%")
+
+        print()
+
+
+class ModuleLogger:
+    """Logger dla konkretnego modułu"""
+
+    def __init__(self, module_name: str, parent_logger: Logger = None):
+        self.module_name = module_name
+        self.parent = parent_logger
+
+    def debug(self, message: str):
+        if self.parent:
+            self.parent.debug(message, self.module_name)
+
+    def info(self, message: str):
+        if self.parent:
+            self.parent.info(message, self.module_name)
+
+    def success(self, message: str):
+        if self.parent:
+            self.parent.success(message, self.module_name)
+
+    def warning(self, message: str):
+        if self.parent:
+            self.parent.warning(message, self.module_name)
+
+    def error(self, message: str):
+        if self.parent:
+            self.parent.error(message, self.module_name)
+
+    def critical(self, message: str):
+        if self.parent:
+            self.parent.critical(message, self.module_name)
 
 
 # Globalny logger dla całej aplikacji
-logger = Logger("SejmBot")
+logger = Logger("SejmBot", enable_colors=True, palette="default")
+
+# żeby sprawdzić dostępne palety, zobacz `PALETTES` w SejmBotDetektor/utils/colors.py
+# "default"
+# "high_contrast"
+# "minimal"
+# "matrix"
+# "neon"
 
 
 # Funkcje pomocnicze dla szybkiego użycia
@@ -273,33 +331,13 @@ def section(message: str):
     logger.section(message)
 
 
-# Specjalne loggery dla różnych modułów
-class ModuleLogger:
-    """Logger dla konkretnego modułu"""
+def set_palette(palette_name: str):
+    return logger.set_palette(palette_name)
 
-    def __init__(self, module_name: str, parent_logger: Logger = None):
-        self.module_name = module_name
-        self.parent = parent_logger or logger
 
-    def debug(self, message: str):
-        self.parent.debug(message, self.module_name)
-
-    def info(self, message: str):
-        self.parent.info(message, self.module_name)
-
-    def success(self, message: str):
-        self.parent.success(message, self.module_name)
-
-    def warning(self, message: str):
-        self.parent.warning(message, self.module_name)
-
-    def error(self, message: str):
-        self.parent.error(message, self.module_name)
-
-    def critical(self, message: str):
-        self.parent.critical(message, self.module_name)
+def get_available_palettes():
+    return logger.get_available_palettes()
 
 
 def get_module_logger(module_name: str) -> ModuleLogger:
-    """Tworzy logger dla konkretnego modułu"""
-    return ModuleLogger(module_name)
+    return ModuleLogger(module_name, logger)

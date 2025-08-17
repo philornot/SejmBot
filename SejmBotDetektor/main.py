@@ -105,10 +105,10 @@ def main():
             stats = detector.get_processing_stats()
 
             logger.table_header(["Metryka", "Wartość"])
-            logger.table_row(["Znalezione słowa kluczowe", stats['found_keywords']], True)
-            logger.table_row(["Utworzone fragmenty", stats['created_fragments']], True)
-            logger.table_row(["Pominięte duplikaty", stats['skipped_duplicates']], True)
-            logger.table_row(["Pominięte (niska pewność)", stats['skipped_low_confidence']], True)
+            logger.table_row(["Znalezione słowa kluczowe", str(stats['found_keywords'])], True)
+            logger.table_row(["Utworzone fragmenty", str(stats['created_fragments'])], True)
+            logger.table_row(["Pominięte duplikaty", str(stats['skipped_duplicates'])], True)
+            logger.table_row(["Pominięte (niska pewność)", str(stats['skipped_low_confidence'])], True)
 
             if stats['found_keywords'] > 0:
                 efficiency = (stats['created_fragments'] / stats['found_keywords']) * 100
@@ -206,6 +206,28 @@ def interactive_mode():
         print(f"Błąd: {e}")
 
 
+def demo_color_palettes():
+    """Demonstracja wszystkich dostępnych palet kolorów"""
+
+    logger.header("DEMONSTRACJA PALET KOLORÓW")
+
+    available_palettes = logger.get_available_palettes()
+    logger.info(f"Dostępne palety: {', '.join(available_palettes)}")
+
+    for palette_name in available_palettes:
+        logger.set_palette(palette_name)
+        logger.palette_demo()
+
+        if palette_name != available_palettes[-1]:  # Nie pyta po ostatniej palecie
+            user_input = input(f"\nNaciśnij Enter aby zobaczyć następną paletę (lub 'q' aby zakończyć)...")
+            if user_input.lower() == 'q':
+                break
+
+    # Powrót do domyślnej palety
+    logger.set_palette("default")
+    logger.success("Demonstracja zakończona - przywrócono domyślną paletę")
+
+
 if __name__ == "__main__":
     # Możesz wybrać jeden z trybów uruchomienia:
 
@@ -217,3 +239,6 @@ if __name__ == "__main__":
 
     # 3. Tryb interaktywny (odkomentuj poniższą linię)
     # interactive_mode()
+
+    # 4. Demonstracja palet kolorów (odkomentuj poniższą linię)
+    # demo_color_palettes()
