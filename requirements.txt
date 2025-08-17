@@ -1,12 +1,10 @@
-# SejmBot - Minimalne zależności (pod RPi Zero)
-
 # Core HTTP i web scraping
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
 
 # Lekka obsługa PDF
-pypdf>=3.0.0
+pypdf>=6.0.0
 
 # Narzędzia do dat
 python-dateutil>=2.8.0
