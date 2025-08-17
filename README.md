@@ -1,6 +1,6 @@
 # SejmBot - Parser transkryptów Sejmu RP
 
-🤖 Automatyczny bot do pobierania i parsowania stenogramów z posiedzeń Sejmu Rzeczypospolitej Polskiej.
+🤖 Automatyczny (niedziałający haha) bot do pobierania i parsowania stenogramów z posiedzeń Sejmu Rzeczypospolitej Polskiej.
 
 ## 🎯 Co robi
 
