@@ -78,7 +78,7 @@ Zmodyfikuj odpowiednio `FUNNY_WORDS` i `EXCLUDE_KEYWORDS` w [`SejmBotDetektor/co
 
 Lub:
 ```python
-from config.keywords import KeywordsConfig
+from SejmBotDetektor.config.keywords import KeywordsConfig
 
 KeywordsConfig.add_funny_keyword("nowe_słowo", weight=2)
 KeywordsConfig.add_exclude_keyword("słowo_do_wykluczenia")
