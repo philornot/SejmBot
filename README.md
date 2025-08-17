@@ -62,7 +62,7 @@ System używa wielokryterialnej analizy:
 4. **Bonus za różnorodność** - wiele różnych słów kluczowych
 5. **Identyfikacja mówcy** - wyższy priorytet dla znanych polityków
 
-## 🔮 Przyszłe etapy
+## Przyszłe etapy
 
 - [ ] **Etap 3:** Bot do automatycznego pobierania transkryptów
 - [ ] **Etap 4:** Integracja z API OpenAI dla lepszej analizy humoru
@@ -99,7 +99,7 @@ System generuje automatyczne statystyki:
 - Najczęściej występujące słowa kluczowe
 - Rozkład pewności fragmentów
 
-## 🐛 Debugowanie
+## Debug
 
 Włączenie trybu debug:
 
@@ -114,7 +114,7 @@ Zapewnia szczegółowe logi:
 - Obliczenia pewności
 - Powody odrzucenia fragmentów
 
-## 📝 Format wyjściowy
+## Format wyjściowy
 
 ### JSON
 
@@ -142,3 +142,7 @@ Projekt stworzony w celach edukacyjnych i rozrywkowych.
 Wykorzystuje publiczne transkrypty z posiedzeń Sejmu RP.
 
 [Oprogramowanie jest na licencji MIT.](https://github.com/philornot/SejmBot/blob/main/LICENSE)
+
+
+### ej aj?
+tak, sejmbot jest rozwijany przy pomocy chatbotów :> (dopóki działa to czemu nie?)
