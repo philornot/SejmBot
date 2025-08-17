@@ -1,37 +1,46 @@
 """
-Refaktoryzowana wersja głównego skryptu do wykrywania śmiesznych fragmentów z Sejmu
+Główny skrypt (entry-point)
 """
 from detectors.fragment_detector import FragmentDetector
 from utils.output_manager import OutputManager
 
 
 def main():
-    """Główna funkcja programu"""
+    """Główna funkcja programu - ulepszona wersja"""
 
-    # Konfiguracja
-    pdf_path = "transkrypt_sejmu.pdf"  # Zmień na właściwą ścieżkę
-    min_confidence = 0.4  # Próg pewności (0.0-1.0) - wyższe = bardziej selektywne
-    max_fragments = 20  # Maksymalna liczba zwracanych fragmentów
-    context_before = 30  # Słowa przed słowem kluczowym
-    context_after = 30  # Słowa po słowie kluczowym
-    debug_mode = True  # Tryb debugowania
-
-    # Inicjalizacja komponentów
-    detector = FragmentDetector(
-        context_before=context_before,
-        context_after=context_after,
-        debug=debug_mode
-    )
-
-    output_manager = OutputManager(debug=debug_mode)
+    # Konfiguracja z walidacją
+    pdf_path = "transkrypt_sejmu.pdf"
+    min_confidence = 0.3  # Obniżono domyślny próg
+    max_fragments = 20
+    context_before = 25  # Zmniejszono dla lepszej wydajności
+    context_after = 25
+    debug_mode = True
 
     try:
-        print("=== DETEKTOR ŚMIESZNYCH FRAGMENTÓW Z SEJMU ===\n")
-        print(f"Przetwarzanie pliku: {pdf_path}")
-        print(f"Parametry: min_confidence={min_confidence}, max_fragments={max_fragments}")
-        print(f"Kontekst: {context_before}/{context_after} słów\n")
+        # Walidacja konfiguracji słów kluczowych
+        from config.keywords import KeywordsConfig
+        issues = KeywordsConfig.validate_keywords()
+        if issues:
+            print("OSTRZEŻENIA konfiguracji słów kluczowych:")
+            for issue in issues:
+                print(f"  - {issue}")
+            print()
 
-        # Przetworzenie PDF
+        # Inicjalizacja komponentów
+        detector = FragmentDetector(
+            context_before=context_before,
+            context_after=context_after,
+            debug=debug_mode
+        )
+
+        output_manager = OutputManager(debug=debug_mode)
+
+        print("=== DETEKTOR ŚMIESZNYCH FRAGMENTÓW Z SEJMU v2.0 ===\n")
+        print(f"Przetwarzanie: {pdf_path}")
+        print(
+            f"Konfiguracja: confidence≥{min_confidence}, max={max_fragments}, kontekst={context_before}/{context_after}")
+
+        # Przetworzenie PDF z obsługą błędów
         fragments = detector.process_pdf(
             pdf_path=pdf_path,
             min_confidence=min_confidence,
@@ -39,38 +48,36 @@ def main():
         )
 
         if not fragments:
-            print("Nie znaleziono fragmentów spełniających kryteria.")
-            print("Spróbuj zmienić parametry:")
-            print("- Obniż min_confidence (np. do 0.2)")
-            print("- Zwiększ max_fragments")
-            print("- Sprawdź czy plik PDF zawiera właściwy tekst")
             return
 
-        # Wyświetlenie wyników
-        output_manager.print_fragments(fragments, max_fragments=10)
-
-        # Podsumowanie statystyk
+        # Wyświetlenie wyników z lepszym formatowaniem
+        output_manager.print_fragments(fragments, max_fragments=8)
         output_manager.print_fragments_summary(fragments)
 
-        # Zapis do JSON
+        # Zapis wyników
         json_filename = "funny_fragments.json"
         if output_manager.save_fragments_to_json(fragments, json_filename):
-            print(f"✅ Zapisano wyniki do {json_filename}")
+            print(f"✅ Zapisano do {json_filename}")
 
-        # Opcjonalny eksport do CSV
         csv_filename = "funny_fragments.csv"
         if output_manager.export_fragments_to_csv(fragments, csv_filename):
-            print(f"✅ Wyeksportowano do {csv_filename}")
+            print(f"✅ Eksport do {csv_filename}")
 
-        print(f"\n🎉 Analiza zakończona pomyślnie! Znaleziono {len(fragments)} fragmentów.")
+        # Wyświetlenie statystyk wydajności
+        if debug_mode:
+            stats = detector.get_processing_stats()
+            print(f"\n📊 Statystyki wydajności:")
+            print(f"  Skuteczność: {stats['created_fragments']}/{stats['found_keywords']} słów→fragmenty")
 
+        print(f"\n🎉 Analiza zakończona! Znaleziono {len(fragments)} wysokiej jakości fragmentów.")
+
+    except ValueError as e:
+        print(f"❌ Błąd konfiguracji: {e}")
     except FileNotFoundError:
         print(f"❌ Plik {pdf_path} nie został znaleziony.")
-        print("Aby przetestować, umieść plik PDF transkryptu w tym samym folderze co skrypt.")
-        print("Możesz też zmienić ścieżkę w zmiennej 'pdf_path' na początku funkcji main().")
-
+        print("💡 Umieść plik PDF w folderze ze skryptem lub zmień ścieżkę w zmiennej 'pdf_path'.")
     except Exception as e:
-        print(f"❌ Wystąpił błąd: {e}")
+        print(f"❌ Nieoczekiwany błąd: {e}")
         if debug_mode:
             import traceback
             traceback.print_exc()

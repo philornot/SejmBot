@@ -2,7 +2,8 @@
 Moduł do przetwarzania tekstu z transkryptów Sejmu
 """
 import re
-from typing import List, Optional
+from typing import List
+
 from config.keywords import SPEAKER_PATTERNS, MEETING_INFO_PATTERNS
 
 
@@ -53,7 +54,7 @@ class TextProcessor:
 
     def find_speaker(self, text: str, position: int) -> str:
         """
-        Znajduje mówcę najbliższego danej pozycji
+        Znajduje mówcę - ulepszona wersja z cache
 
         Args:
             text: Tekst transkryptu
@@ -62,25 +63,36 @@ class TextProcessor:
         Returns:
             Imię i nazwisko mówcy lub "Nieznany mówca"
         """
-        # Szukamy wstecz od pozycji, żeby znaleźć ostatniego mówcę
-        text_before = text[:max(0, position)]
+        if not hasattr(self, '_speaker_cache'):
+            self._speaker_cache = {}
+
+        # Sprawdzamy cache dla tej pozycji (±100 znaków)
+        cache_key = position // 100
+        if cache_key in self._speaker_cache:
+            cached_speaker, cached_pos = self._speaker_cache[cache_key]
+            if abs(cached_pos - position) < 500:  # Cache hit
+                return cached_speaker
+
+        # Szukamy w fragmencie tekstu przed pozycją
+        search_start = max(0, position - 2000)  # Ograniczamy obszar wyszukiwania
+        text_before = text[search_start:position + 100]
+
+        found_speaker = "Nieznany mówca"
 
         for pattern in self.speaker_patterns:
             matches = list(re.finditer(pattern, text_before, re.IGNORECASE))
             if matches:
-                # Bierzemy ostatnie dopasowanie (najbliższe naszej pozycji)
                 last_match = matches[-1]
-                speaker = last_match.group(1)
+                found_speaker = last_match.group(1).strip()
 
                 if self.debug:
-                    print(f"DEBUG: Znaleziono mówcę '{speaker}' wzorcem '{pattern[:30]}...'")
+                    print(f"DEBUG: Znaleziono mówcę '{found_speaker}'")
+                break
 
-                return speaker
+        # Zapisujemy do cache
+        self._speaker_cache[cache_key] = (found_speaker, position)
 
-        if self.debug:
-            print(f"DEBUG: Nie znaleziono mówcy dla pozycji {position}")
-
-        return "Nieznany mówca"
+        return found_speaker
 
     def extract_meeting_info(self, text: str) -> str:
         """

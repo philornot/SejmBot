@@ -2,7 +2,8 @@
 Moduł do analizy i oceny fragmentów tekstu pod kątem humoru
 """
 import re
-from typing import List, Set
+from typing import List, Tuple
+
 from config.keywords import KeywordsConfig
 
 
@@ -13,31 +14,57 @@ class FragmentAnalyzer:
         self.debug = debug
         self.funny_keywords = KeywordsConfig.get_funny_keywords()
         self.exclude_keywords = KeywordsConfig.get_exclude_keywords()
+        self._compile_keyword_patterns()
+
+    def _compile_keyword_patterns(self):
+        """Prekompiluje wzorce regex dla słów kluczowych dla lepszej wydajności"""
+        self.keyword_patterns = {}
+        for keyword in self.funny_keywords.keys():
+            # Tworzymy wzorzec z granicami słów i obsługą polskich znaków
+            pattern = r'\b' + re.escape(keyword) + r'[a-ząćęłńóśźż]*\b'
+            self.keyword_patterns[keyword] = re.compile(pattern, re.IGNORECASE)
+
+        if self.debug:
+            print(f"DEBUG: Skompilowano {len(self.keyword_patterns)} wzorców słów kluczowych")
+
+    def find_keywords_in_text(self, text: str) -> List[Tuple[str, int]]:
+        """
+        Znajduje wszystkie słowa kluczowe w tekście wraz z ich pozycjami
+
+        Args:
+            text: Tekst do przeszukania
+
+        Returns:
+            Lista tupli (słowo_kluczowe, pozycja)
+        """
+        found_keywords = []
+
+        for keyword, pattern in self.keyword_patterns.items():
+            matches = pattern.finditer(text)
+            for match in matches:
+                found_keywords.append((keyword, match.start()))
+                if self.debug:
+                    print(f"DEBUG: Znaleziono '{keyword}' na pozycji {match.start()}: '{match.group()}'")
+
+        # Sortujemy według pozycji
+        found_keywords.sort(key=lambda x: x[1])
+        return found_keywords
 
     def find_keywords_in_word(self, word: str) -> List[str]:
         """
+        PRZESTARZAŁE: Używaj find_keywords_in_text
         Znajduje słowa kluczowe w pojedynczym słowie
-
-        Args:
-            word: Słowo do sprawdzenia
-
-        Returns:
-            Lista znalezionych słów kluczowych
         """
         # Czyścimy słowo z interpunkcji
         clean_word = re.sub(r'[^\w\s]', '', word.lower())
         found_keywords = []
 
         for keyword in self.funny_keywords.keys():
-            # Sprawdzamy dokładne dopasowanie lub częściowe (tylko dla dłuższych słów)
-            if keyword == clean_word:
+            # Sprawdzamy dokładne dopasowanie lub częściowe dla dłuższych słów
+            if keyword == clean_word or (len(keyword) > 4 and keyword in clean_word):
                 found_keywords.append(keyword)
                 if self.debug:
-                    print(f"DEBUG: Dokładne dopasowanie '{keyword}' w słowie '{clean_word}'")
-            elif len(keyword) > 5 and keyword in clean_word:
-                found_keywords.append(keyword)
-                if self.debug:
-                    print(f"DEBUG: Częściowe dopasowanie '{keyword}' w słowie '{clean_word}'")
+                    print(f"DEBUG: Dopasowanie '{keyword}' w słowie '{clean_word}'")
 
         return found_keywords
 
@@ -52,89 +79,92 @@ class FragmentAnalyzer:
         Returns:
             Lista zweryfikowanych słów kluczowych
         """
+        if not fragment_text or not keywords:
+            return []
+
         verified_keywords = []
         fragment_lower = fragment_text.lower()
 
         for keyword in keywords:
-            if keyword in fragment_lower:
-                verified_keywords.append(keyword)
-                if self.debug:
-                    print(f"DEBUG: Zweryfikowano słowo '{keyword}' w fragmencie")
+            # Używamy wzorca regex dla lepszej weryfikacji
+            if keyword in self.keyword_patterns:
+                pattern = self.keyword_patterns[keyword]
+                if pattern.search(fragment_text):
+                    verified_keywords.append(keyword)
+                    if self.debug:
+                        print(f"DEBUG: Zweryfikowano słowo '{keyword}' w fragmencie")
+                else:
+                    if self.debug:
+                        print(f"DEBUG: UWAGA! Słowo '{keyword}' nie zostało zweryfikowane!")
             else:
-                if self.debug:
-                    print(f"DEBUG: UWAGA! Słowo '{keyword}' nie występuje w fragmencie!")
+                # Fallback dla starych wywołań
+                if keyword in fragment_lower:
+                    verified_keywords.append(keyword)
 
-        return verified_keywords
+        return list(set(verified_keywords))  # Usuwamy duplikaty
 
     def calculate_confidence(self, fragment_text: str, keywords_found: List[str]) -> float:
         """
-        Oblicza poziom pewności że fragment jest śmieszny
+        Oblicza poziom pewności że fragment jest śmieszny - uproszczony algorytm
 
         Args:
             fragment_text: Tekst fragmentu
             keywords_found: Lista znalezionych słów kluczowych
 
         Returns:
-            Poziom pewności (0.05-0.95)
+            Poziom pewności (0.1-0.95)
         """
-        if not keywords_found:
-            return 0.05
+        if not keywords_found or not fragment_text:
+            return 0.1
 
         # Sprawdzamy czy są słowa wykluczające
         fragment_lower = fragment_text.lower()
         exclude_count = sum(1 for exclude_word in self.exclude_keywords
                             if exclude_word in fragment_lower)
 
-        if exclude_count > 3:  # Za dużo słów wykluczających
+        # Jeśli za dużo słów wykluczających, bardzo niska pewność
+        if exclude_count > 4:
             if self.debug:
-                print(f"DEBUG: Za dużo słów wykluczających ({exclude_count}), niska pewność")
-            return 0.1  # Bardzo niska pewność zamiast 0
+                print(f"DEBUG: Za dużo słów wykluczających ({exclude_count})")
+            return 0.1
 
-        # Sumujemy wagi słów kluczowych
+        # Obliczamy bazowy wynik na podstawie wag słów kluczowych
         total_weight = sum(KeywordsConfig.get_keyword_weight(keyword) for keyword in keywords_found)
+        base_score = min(total_weight * 0.15, 0.7)  # Skalujemy do max 0.7
 
-        # Normalizujemy wynik - ale nie dzielimy przez maksymalną możliwą wagę
-        base_score = min(total_weight / 10.0, 0.8)  # Max 0.8 z samych słów kluczowych
+        # Bonus za różnorodność słów kluczowych
+        unique_keywords = len(set(keywords_found))
+        variety_bonus = min(unique_keywords * 0.05, 0.15)
 
         # Kara za słowa wykluczające
-        exclude_penalty = exclude_count * 0.15
+        exclude_penalty = exclude_count * 0.08
 
         # Analiza długości fragmentu
         word_count = len(fragment_text.split())
-        if word_count < 10:
-            length_penalty = 0.3  # Kara za bardzo krótkie fragmenty
-            length_bonus = 0
-        elif word_count > 20:
-            length_bonus = min(word_count / 200, 0.2)  # Bonus za odpowiednią długość
-            length_penalty = 0
+        if word_count < 8:
+            length_modifier = 0.8  # Redukcja dla bardzo krótkich
+        elif word_count > 50:
+            length_modifier = 1.1  # Bonus za dłuższe fragmenty
         else:
-            length_bonus = 0.1
-            length_penalty = 0
+            length_modifier = 1.0
 
-        # Bonus za występowanie wielu różnych słów kluczowych
-        variety_bonus = min(len(set(keywords_found)) * 0.1, 0.3)
+        # Obliczamy końcowy wynik
+        final_score = (base_score + variety_bonus - exclude_penalty) * length_modifier
 
-        final_score = (base_score - exclude_penalty + length_bonus +
-                       variety_bonus - length_penalty)
-
-        # Ograniczamy do zakresu 0.05-0.95
-        confidence = max(0.05, min(0.95, final_score))
+        # Ograniczamy do zakresu 0.1-0.95
+        confidence = max(0.1, min(0.95, final_score))
 
         if self.debug:
-            print(f"DEBUG: Obliczenie pewności:")
-            print(f"  - Base score (wagi): {base_score:.2f}")
-            print(f"  - Exclude penalty: -{exclude_penalty:.2f}")
-            print(f"  - Length bonus: +{length_bonus:.2f}")
-            print(f"  - Variety bonus: +{variety_bonus:.2f}")
-            print(f"  - Length penalty: -{length_penalty:.2f}")
-            print(f"  - Final confidence: {confidence:.2f}")
+            print(f"DEBUG: Pewność - base: {base_score:.2f}, variety: +{variety_bonus:.2f}, "
+                  f"exclude: -{exclude_penalty:.2f}, length_mod: {length_modifier:.2f}, "
+                  f"final: {confidence:.2f}")
 
         return confidence
 
     def is_duplicate(self, new_fragment: str, existing_fragments: List[str],
-                     similarity_threshold: float = 0.8) -> bool:
+                     similarity_threshold: float = 0.7) -> bool:
         """
-        Sprawdza czy fragment jest duplikatem istniejącego
+        Sprawdza czy fragment jest duplikatem - ulepszona metoda
 
         Args:
             new_fragment: Nowy fragment do sprawdzenia
@@ -144,46 +174,111 @@ class FragmentAnalyzer:
         Returns:
             True jeśli fragment jest duplikatem
         """
-        new_words = set(new_fragment.lower().split())
+        if not new_fragment or not existing_fragments:
+            return False
+
+        new_words = set(word.lower() for word in new_fragment.split() if len(word) > 3)
+
+        if len(new_words) < 3:  # Za mało słów do porównania
+            return False
 
         for existing in existing_fragments:
-            existing_words = set(existing.lower().split())
+            existing_words = set(word.lower() for word in existing.split() if len(word) > 3)
 
-            if len(new_words) == 0 or len(existing_words) == 0:
+            if len(existing_words) < 3:
                 continue
 
-            # Obliczamy podobieństwo Jaccarda
+            # Obliczamy podobieństwo Jaccarda tylko dla dłuższych słów
             intersection = len(new_words.intersection(existing_words))
             union = len(new_words.union(existing_words))
 
-            similarity = intersection / union if union > 0 else 0
+            if union == 0:
+                continue
 
-            if similarity > similarity_threshold:
+            similarity = intersection / union
+
+            # Dodatkowe sprawdzenie - czy fragmenty zaczynają się podobnie
+            new_start = ' '.join(new_fragment.split()[:5]).lower()
+            existing_start = ' '.join(existing.split()[:5]).lower()
+            start_similarity = len(set(new_start.split()).intersection(set(existing_start.split()))) / max(
+                len(set(new_start.split())), len(set(existing_start.split())), 1)
+
+            if similarity > similarity_threshold or start_similarity > 0.8:
                 if self.debug:
-                    print(f"DEBUG: Znaleziono duplikat (podobieństwo: {similarity:.2f})")
+                    print(f"DEBUG: Duplikat - podobieństwo: {similarity:.2f}, start: {start_similarity:.2f}")
                 return True
 
         return False
 
     def should_skip_fragment(self, speaker: str, confidence: float,
-                             min_confidence: float) -> tuple[bool, str]:
+                             min_confidence: float, fragment_text: str = "") -> Tuple[bool, str]:
         """
-        Sprawdza czy fragment powinien być pominięty
+        Sprawdza czy fragment powinien być pominięty - rozszerzona walidacja
 
         Args:
             speaker: Mówca fragmentu
             confidence: Pewność fragmentu
             min_confidence: Minimalny próg pewności
+            fragment_text: Tekst fragmentu (opcjonalny)
 
         Returns:
             Tuple (czy_pomijać, powód)
         """
-        # Pomijamy fragmenty bez rzeczywistego mówcy (chyba że ma wysoką pewność)
-        if speaker == "Nieznany mówca" and confidence < 0.7:
-            return True, "Nieznany mówca i niska pewność"
+        # Walidacja parametrów
+        if not isinstance(confidence, (int, float)) or not isinstance(min_confidence, (int, float)):
+            return True, "Nieprawidłowe wartości pewności"
+
+        if confidence < 0 or confidence > 1 or min_confidence < 0 or min_confidence > 1:
+            return True, "Wartości pewności poza zakresem 0-1"
 
         # Pomijamy fragmenty z niską pewnością
         if confidence < min_confidence:
             return True, f"Pewność za niska ({confidence:.2f} < {min_confidence})"
 
+        # Pomijamy fragmenty bez rzeczywistego mówcy (chyba że ma wysoką pewność)
+        if speaker == "Nieznany mówca" and confidence < 0.6:
+            return True, "Nieznany mówca i średnia pewność"
+
+        # Sprawdzamy czy fragment nie jest za krótki
+        if fragment_text and len(fragment_text.split()) < 5:
+            return True, "Fragment za krótki"
+
         return False, ""
+
+    def get_fragment_quality_metrics(self, fragment_text: str, keywords: List[str]) -> dict:
+        """
+        Zwraca szczegółowe metryki jakości fragmentu
+
+        Args:
+            fragment_text: Tekst fragmentu
+            keywords: Znalezione słowa kluczowe
+
+        Returns:
+            Słownik z metrykami
+        """
+        metrics = {
+            'word_count': len(fragment_text.split()),
+            'char_count': len(fragment_text),
+            'keyword_count': len(keywords),
+            'unique_keywords': len(set(keywords)),
+            'avg_keyword_weight': 0,
+            'exclude_word_count': 0,
+            'readability_score': 0
+        }
+
+        if keywords:
+            weights = [KeywordsConfig.get_keyword_weight(kw) for kw in keywords]
+            metrics['avg_keyword_weight'] = sum(weights) / len(weights)
+
+        # Liczba słów wykluczających
+        fragment_lower = fragment_text.lower()
+        metrics['exclude_word_count'] = sum(1 for exclude_word in self.exclude_keywords
+                                            if exclude_word in fragment_lower)
+
+        # Prosta metryka czytelności (stosunek długich słów do wszystkich)
+        words = fragment_text.split()
+        if words:
+            long_words = [w for w in words if len(w) > 6]
+            metrics['readability_score'] = len(long_words) / len(words)
+
+        return metrics
