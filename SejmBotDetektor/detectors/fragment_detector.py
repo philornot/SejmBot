@@ -22,9 +22,11 @@ class FragmentDetector:
             context_after: Liczba słów po słowie kluczowym
             debug: Tryb debugowania
         """
+        self.logger = get_module_logger("FragmentDetector")
+
         # Walidacja parametrów
         if not isinstance(context_before, int) or not isinstance(context_after, int):
-            raise TypeError("Parametry kontekstu muszą być liczbami całkowitymi")  # todo: "This code is unreachable"?
+            raise TypeError("Parametry kontekstu muszą być liczbami całkowitymi")
 
         if context_before < 5 or context_after < 5:
             error_msg = "Kontekst musi wynosić co najmniej 5 słów z każdej strony"
@@ -39,7 +41,6 @@ class FragmentDetector:
         self.context_before = context_before
         self.context_after = context_after
         self.debug = debug
-        self.logger = get_module_logger("FragmentDetector")
 
         # Inicjalizujemy komponenty
         self.text_processor = TextProcessor(debug=debug)
@@ -127,8 +128,10 @@ class FragmentDetector:
                         self.logger.debug(f"Utworzono fragment #{len(fragments)}")
 
             except Exception as e:
+                self.logger.error(f"Błąd podczas przetwarzania grupy: {e}")
                 if self.debug:
-                    self.logger.debug(f"Błąd podczas przetwarzania grupy: {e}")
+                    import traceback
+                    self.logger.debug(f"Szczegóły błędu: {traceback.format_exc()}")
                 continue
 
         # Sortujemy według pewności (najlepsze pierwsze)
@@ -136,7 +139,7 @@ class FragmentDetector:
 
         if self.debug:
             self.logger.debug(f"Znaleziono łącznie {len(fragments)} fragmentów")
-        self._print_processing_stats()
+            self._print_processing_stats()
 
         return fragments
 
@@ -349,15 +352,13 @@ class FragmentDetector:
             self.logger.error(f"Walidacja pliku nieudana: {validation_message}")
             return []
 
-        self.logger.success("Plik PDF zwalidowany pomyślnie")
+        self.logger.info("Plik PDF zwalidowany pomyślnie")
 
         # Wyciągamy tekst
         text = self.pdf_processor.extract_text_from_pdf(pdf_path)
         if not text:
             error_msg = "Nie udało się wyciągnąć tekstu z PDF"
-            print(error_msg)
-            if self.debug:
-                print(f"DEBUG ERROR: {error_msg}")
+            self.logger.error(error_msg)
             return []
 
         if self.debug:
@@ -368,7 +369,7 @@ class FragmentDetector:
             all_fragments = self.find_funny_fragments(text, min_confidence)
 
             if not all_fragments:
-                print("Nie znaleziono żadnych fragmentów spełniających kryteria")
+                self.logger.warning("Nie znaleziono żadnych fragmentów spełniających kryteria")
                 self._suggest_parameter_adjustments(min_confidence, text)
                 return []
 
@@ -382,31 +383,33 @@ class FragmentDetector:
 
         except Exception as e:
             error_msg = f"Błąd podczas przetwarzania: {e}"
-            print(error_msg)
+            self.logger.error(error_msg)
             if self.debug:
-                print(f"DEBUG ERROR: {error_msg}")
                 import traceback
-                traceback.print_exc()
+                self.logger.debug(f"Szczegóły błędu: {traceback.format_exc()}")
             return []
 
     def _suggest_parameter_adjustments(self, current_min_confidence: float, text: str):
         """Sugeruje zmiany parametrów jeśli nie znaleziono fragmentów"""
-        print("\nSugestie zmian parametrów:")
+        suggestions = ["Sugestie zmian parametrów:"]
 
         if current_min_confidence > 0.3:
-            print(f"- Obniż min_confidence z {current_min_confidence} do {max(0.2, current_min_confidence - 0.2)}")
+            suggestions.append(
+                f"- Obniż min_confidence z {current_min_confidence} "
+                f"do {max(0.2, current_min_confidence - 0.2)}"
+            )
 
-        # Sprawdzamy czy w ogóle są słowa kluczowe
         keywords_found = self.fragment_analyzer.find_keywords_in_text(text.lower())
         if keywords_found:
-            print(f"- W tekście znaleziono {len(keywords_found)} słów kluczowych")
-            print("- Spróbuj zwiększyć context_before/context_after")
+            suggestions.append(f"- W tekście znaleziono {len(keywords_found)} słów kluczowych")
+            suggestions.append("- Spróbuj zwiększyć context_before/context_after")
+            self.logger.info("\n".join(suggestions))
         else:
-            print("- Nie znaleziono słów kluczowych w tekście")
-            print("- Sprawdź czy plik zawiera właściwy transkrypt")
+            suggestions.append("- Nie znaleziono słów kluczowych w tekście")
+            suggestions.append("- Sprawdź czy plik zawiera właściwy transkrypt")
+            self.logger.warning("\n".join(suggestions))
 
-    @staticmethod
-    def _print_results_summary(all_fragments: List[FunnyFragment],
+    def _print_results_summary(self, all_fragments: List[FunnyFragment],
                                returned_fragments: List[FunnyFragment],
                                min_confidence: float):
         """Wyświetla kolorowe podsumowanie wyników"""
@@ -430,18 +433,18 @@ class FragmentDetector:
         medium_quality = len([f for f in all_fragments if 0.4 <= f.confidence_score < 0.7])
         low_quality = len([f for f in all_fragments if f.confidence_score < 0.4])
 
-        logger.info("Rozkład jakości fragmentów:")
+        self.logger.info("Rozkład jakości fragmentów:")
         logger.keyvalue("  Wysoka jakość (≥0.7)", str(high_quality), Colors.GREEN)
         logger.keyvalue("  Średnia jakość (0.4-0.7)", str(medium_quality), Colors.YELLOW)
         logger.keyvalue("  Niska jakość (<0.4)", str(low_quality), Colors.RED)
 
     def _print_processing_stats(self):
         """Wyświetla statystyki przetwarzania"""
-        print(f"\nDEBUG - Statystyki przetwarzania:")
-        print(f"  Znalezione słowa kluczowe: {self.stats['found_keywords']}")
-        print(f"  Utworzone fragmenty: {self.stats['created_fragments']}")
-        print(f"  Pominięte duplikaty: {self.stats['skipped_duplicates']}")
-        print(f"  Pominięte (niska pewność): {self.stats['skipped_low_confidence']}")
+        self.logger.debug("Statystyki przetwarzania:")
+        self.logger.debug(f"  Znalezione słowa kluczowe: {self.stats['found_keywords']}")
+        self.logger.debug(f"  Utworzone fragmenty: {self.stats['created_fragments']}")
+        self.logger.debug(f"  Pominięte duplikaty: {self.stats['skipped_duplicates']}")
+        self.logger.debug(f"  Pominięte (niska pewność): {self.stats['skipped_low_confidence']}")
 
     def get_processing_stats(self) -> dict:
         """Zwraca statystyki ostatniego przetwarzania"""
