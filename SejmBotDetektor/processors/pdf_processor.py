@@ -2,14 +2,14 @@
 Moduł do obsługi plików PDF z transkryptami Sejmu
 """
 import pypdf
-from typing import Optional
-
+from SejmBotDetektor.utils.logger import get_module_logger
 
 class PDFProcessor:
     """Klasa do przetwarzania plików PDF"""
 
     def __init__(self, debug: bool = False):
         self.debug = debug
+        self.logger = get_module_logger("PDFProcessor")
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """
@@ -23,46 +23,40 @@ class PDFProcessor:
         """
         try:
             if self.debug:
-                print(f"DEBUG: Otwieranie pliku PDF: {pdf_path}")
+                self.logger.debug(f"Otwieranie pliku PDF: {pdf_path}")
 
             with open(pdf_path, 'rb') as file:
                 pdf_reader = pypdf.PdfReader(file)
                 text = ""
 
                 if self.debug:
-                    print(f"DEBUG: Plik PDF ma {len(pdf_reader.pages)} stron")
+                    self.logger.debug(f"Plik PDF ma {len(pdf_reader.pages)} stron")
 
                 for page_num, page in enumerate(pdf_reader.pages):
                     page_text = page.extract_text()
                     text += page_text + "\n"
 
                     if self.debug and page_num < 3:  # Debugujemy tylko pierwsze 3 strony
-                        print(f"DEBUG: Strona {page_num + 1}: {len(page_text)} znaków")
+                        self.logger.debug(f"Strona {page_num + 1}: {len(page_text)} znaków")
 
                 if self.debug:
-                    print(f"DEBUG: Łącznie wyciągnięto {len(text)} znaków")
+                    self.logger.debug(f"Łącznie wyciągnięto {len(text)} znaków")
 
                 return text
 
         except FileNotFoundError:
             error_msg = f"Plik {pdf_path} nie został znaleziony"
-            if self.debug:
-                print(f"DEBUG ERROR: {error_msg}")
-            print(error_msg)
+            self.logger.error(error_msg)
             return ""
 
         except pypdf.errors.PdfReadError as e:
             error_msg = f"Błąd podczas czytania PDF: {e}"
-            if self.debug:
-                print(f"DEBUG ERROR: {error_msg}")
-            print(error_msg)
+            self.logger.error(error_msg)
             return ""
 
         except Exception as e:
             error_msg = f"Nieoczekiwany błąd podczas czytania PDF: {e}"
-            if self.debug:
-                print(f"DEBUG ERROR: {error_msg}")
-            print(error_msg)
+            self.logger.error(error_msg)
             return ""
 
     def validate_pdf_file(self, pdf_path: str) -> tuple[bool, str]:
@@ -89,7 +83,7 @@ class PDFProcessor:
                     return False, "Nie można wyciągnąć tekstu z pliku PDF"
 
                 if self.debug:
-                    print(f"DEBUG: Plik PDF jest prawidłowy - {len(pdf_reader.pages)} stron")
+                    self.logger.debug(f"Plik PDF jest prawidłowy - {len(pdf_reader.pages)} stron")
 
                 return True, "Plik PDF jest prawidłowy"
 
@@ -138,10 +132,10 @@ class PDFProcessor:
                     metadata['modification_date'] = pdf_metadata.get('/ModDate')
 
                 if self.debug:
-                    print(f"DEBUG: Metadane PDF: {metadata}")
+                    self.logger.debug(f"Metadane PDF: {metadata}")
 
         except Exception as e:
             if self.debug:
-                print(f"DEBUG: Nie można wyciągnąć metadanych: {e}")
+                self.logger.debug(f"Nie można wyciągnąć metadanych: {e}")
 
         return metadata

@@ -4,7 +4,8 @@ Moduł do przetwarzania tekstu z transkryptów Sejmu
 import re
 from typing import List
 
-from config.keywords import SPEAKER_PATTERNS, MEETING_INFO_PATTERNS
+from SejmBotDetektor.config.keywords import SPEAKER_PATTERNS, MEETING_INFO_PATTERNS
+from SejmBotDetektor.utils.logger import get_module_logger
 
 
 class TextProcessor:
@@ -12,6 +13,7 @@ class TextProcessor:
 
     def __init__(self, debug: bool = False):
         self.debug = debug
+        self.logger = get_module_logger("TextProcessor")
         self.speaker_patterns = SPEAKER_PATTERNS
         self.meeting_patterns = MEETING_INFO_PATTERNS
 
@@ -48,7 +50,7 @@ class TextProcessor:
         cleaned_text = ' '.join(cleaned_lines)
 
         if self.debug:
-            print(f"DEBUG: Oczyszczono tekst z {len(text)} do {len(cleaned_text)} znaków")
+            self.logger.debug(f"Oczyszczono tekst z {len(text)} do {len(cleaned_text)} znaków")
 
         return cleaned_text
 
@@ -86,7 +88,7 @@ class TextProcessor:
                 found_speaker = last_match.group(1).strip()
 
                 if self.debug:
-                    print(f"DEBUG: Znaleziono mówcę '{found_speaker}'")
+                    self.logger.debug(f"Znaleziono mówcę '{found_speaker}'")
                 break
 
         # Zapisujemy do cache
@@ -113,12 +115,12 @@ class TextProcessor:
                 meeting_info = match.group(1).strip()
 
                 if self.debug:
-                    print(f"DEBUG: Znaleziono info o posiedzeniu: {meeting_info[:50]}...")
+                    self.logger.debug(f"Znaleziono info o posiedzeniu: {meeting_info[:50]}...")
 
                 return meeting_info
 
         if self.debug:
-            print("DEBUG: Nie znaleziono informacji o posiedzeniu")
+            self.logger.debug("Nie znaleziono informacji o posiedzeniu")
 
         return "Informacje o posiedzeniu nie zostały znalezione"
 
@@ -140,7 +142,7 @@ class TextProcessor:
 
         if position != -1:
             if self.debug:
-                print(f"DEBUG: Znaleziono pozycję fragmentu: {position}")
+                self.logger.debug(f"Znaleziono pozycję fragmentu: {position}")
             return position
 
         # Jeśli nie, szukamy pojedynczego słowa
@@ -148,9 +150,9 @@ class TextProcessor:
 
         if self.debug:
             if position != -1:
-                print(f"DEBUG: Znaleziono pozycję słowa '{fallback_word}': {position}")
+                self.logger.debug(f"Znaleziono pozycję słowa '{fallback_word}': {position}")
             else:
-                print(f"DEBUG: Nie znaleziono pozycji dla fragmentu ani słowa '{fallback_word}'")
+                self.logger.debug(f"Nie znaleziono pozycji dla fragmentu ani słowa '{fallback_word}'")
 
         return position
 
@@ -175,6 +177,6 @@ class TextProcessor:
         fragment_text = ' '.join(fragment_words)
 
         if self.debug:
-            print(f"DEBUG: Wyciągnięto kontekst [{start_idx}:{end_idx}] = {len(fragment_words)} słów")
+            self.logger.debug(f"Wyciągnięto kontekst [{start_idx}:{end_idx}] = {len(fragment_words)} słów")
 
         return fragment_text

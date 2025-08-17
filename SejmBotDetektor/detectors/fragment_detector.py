@@ -3,10 +3,11 @@ Główny moduł do wykrywania śmiesznych fragmentów w transkryptach Sejmu
 """
 from typing import List, Optional, Tuple
 
-from analyzers.fragment_analyzer import FragmentAnalyzer
-from models.funny_fragment import FunnyFragment
-from processors.pdf_processor import PDFProcessor
-from processors.text_processor import TextProcessor
+from SejmBotDetektor.analyzers.fragment_analyzer import FragmentAnalyzer
+from SejmBotDetektor.models.funny_fragment import FunnyFragment
+from SejmBotDetektor.processors.pdf_processor import PDFProcessor
+from SejmBotDetektor.processors.text_processor import TextProcessor
+from SejmBotDetektor.utils.logger import get_module_logger, logger, Colors
 
 
 class FragmentDetector:
@@ -23,17 +24,22 @@ class FragmentDetector:
         """
         # Walidacja parametrów
         if not isinstance(context_before, int) or not isinstance(context_after, int):
-            raise TypeError("Parametry kontekstu muszą być liczbami całkowitymi")
+            raise TypeError("Parametry kontekstu muszą być liczbami całkowitymi")  # todo: "This code is unreachable"?
 
         if context_before < 5 or context_after < 5:
-            raise ValueError("Kontekst musi wynosić co najmniej 5 słów z każdej strony")
+            error_msg = "Kontekst musi wynosić co najmniej 5 słów z każdej strony"
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
 
         if context_before > 200 or context_after > 200:
-            raise ValueError("Kontekst nie może przekraczać 200 słów z każdej strony")
+            error_msg = "Kontekst nie może przekraczać 200 słów z każdej strony"
+            self.logger.error(error_msg)
+            raise ValueError(error_msg)
 
         self.context_before = context_before
         self.context_after = context_after
         self.debug = debug
+        self.logger = get_module_logger("FragmentDetector")
 
         # Inicjalizujemy komponenty
         self.text_processor = TextProcessor(debug=debug)
@@ -50,7 +56,7 @@ class FragmentDetector:
         }
 
         if self.debug:
-            print(f"DEBUG: Inicjalizowano FragmentDetector z kontekstem: {context_before}/{context_after}")
+            self.logger.debug(f"Inicjalizowano z kontekstem: {context_before}/{context_after}")
 
     def find_funny_fragments(self, text: str, min_confidence: float = 0.3) -> List[FunnyFragment]:
         """
@@ -66,7 +72,7 @@ class FragmentDetector:
         # Walidacja parametrów
         if not text or not text.strip():
             if self.debug:
-                print("DEBUG: Pusty tekst wejściowy")
+                self.logger.debug("Pusty tekst wejściowy")
             return []
 
         if not 0.1 <= min_confidence <= 0.95:
@@ -76,7 +82,7 @@ class FragmentDetector:
         cleaned_text = self.text_processor.clean_text(text)
         if not cleaned_text:
             if self.debug:
-                print("DEBUG: Tekst pusty po czyszczeniu")
+                self.logger.debug("Tekst pusty po czyszczeniu")
             return []
 
         # Używamy nowej metody wyszukiwania słów kluczowych
@@ -84,7 +90,7 @@ class FragmentDetector:
 
         if not keyword_positions:
             if self.debug:
-                print("DEBUG: Nie znaleziono słów kluczowych w tekście")
+                self.logger.debug("Nie znaleziono słów kluczowych w tekście")
             return []
 
         self.stats['found_keywords'] = len(keyword_positions)
@@ -93,7 +99,7 @@ class FragmentDetector:
         existing_texts = []
 
         if self.debug:
-            print(f"DEBUG: Znaleziono {len(keyword_positions)} słów kluczowych w tekście")
+            self.logger.debug(f"Znaleziono {len(keyword_positions)} słów kluczowych w tekście")
 
         # Wyciągamy informacje o posiedzeniu raz na początku
         meeting_info = self.text_processor.extract_meeting_info(text)
@@ -102,7 +108,7 @@ class FragmentDetector:
         grouped_keywords = self._group_nearby_keywords(keyword_positions, cleaned_text)
 
         if self.debug:
-            print(f"DEBUG: Pogrupowano w {len(grouped_keywords)} fragmentów")
+            self.logger.debug(f"Pogrupowano w {len(grouped_keywords)} fragmentów")
 
         # Przetwarzamy każdą grupę słów kluczowych
         for group_center, keywords_in_group in grouped_keywords:
@@ -118,19 +124,19 @@ class FragmentDetector:
                     self.stats['created_fragments'] += 1
 
                     if self.debug:
-                        print(f"DEBUG: Utworzono fragment #{len(fragments)}")
+                        self.logger.debug(f"Utworzono fragment #{len(fragments)}")
 
             except Exception as e:
                 if self.debug:
-                    print(f"DEBUG: Błąd podczas przetwarzania grupy: {e}")
+                    self.logger.debug(f"Błąd podczas przetwarzania grupy: {e}")
                 continue
 
         # Sortujemy według pewności (najlepsze pierwsze)
         fragments.sort(key=lambda x: x.confidence_score, reverse=True)
 
         if self.debug:
-            print(f"DEBUG: Znaleziono łącznie {len(fragments)} fragmentów")
-            self._print_processing_stats()
+            self.logger.debug(f"Znaleziono łącznie {len(fragments)} fragmentów")
+        self._print_processing_stats()
 
         return fragments
 
@@ -171,7 +177,8 @@ class FragmentDetector:
 
         return groups
 
-    def _finalize_group(self, group: List[Tuple[str, int]], text: str) -> Tuple[int, List[str]]:
+    @staticmethod
+    def _finalize_group(group: List[Tuple[str, int]], text: str) -> Tuple[int, List[str]]:
         """
         Finalizuje grupę słów kluczowych
 
@@ -217,7 +224,7 @@ class FragmentDetector:
 
         if not fragment_text or len(fragment_text.strip()) < 20:
             if self.debug:
-                print("DEBUG: Fragment za krótki, pomijam")
+                self.logger.debug("Fragment za krótki, pomijam")
             return None
 
         # Weryfikujemy słowa kluczowe w fragmencie
@@ -227,7 +234,7 @@ class FragmentDetector:
 
         if not verified_keywords:
             if self.debug:
-                print("DEBUG: Brak zweryfikowanych słów kluczowych")
+                self.logger.debug("Brak zweryfikowanych słów kluczowych")
             return None
 
         # Obliczamy pewność
@@ -252,7 +259,7 @@ class FragmentDetector:
 
         if should_skip:
             if self.debug:
-                print(f"DEBUG: Pomijam fragment: {skip_reason}")
+                self.logger.debug(f"Pomijam fragment: {skip_reason}")
             if "pewność za niska" in skip_reason.lower():
                 self.stats['skipped_low_confidence'] += 1
             return None
@@ -260,7 +267,7 @@ class FragmentDetector:
         # Sprawdzamy duplikaty
         if self.fragment_analyzer.is_duplicate(fragment_text, existing_texts):
             if self.debug:
-                print("DEBUG: Fragment jest duplikatem")
+                self.logger.debug("Fragment jest duplikatem")
             self.stats['skipped_duplicates'] += 1
             return None
 
@@ -278,7 +285,8 @@ class FragmentDetector:
 
         return fragment
 
-    def _build_char_to_word_mapping(self, text: str) -> dict:
+    @staticmethod
+    def _build_char_to_word_mapping(text: str) -> dict:
         """
         Buduje mapowanie pozycji znaków na pozycje słów
 
@@ -331,17 +339,17 @@ class FragmentDetector:
         self.stats['processed_texts'] = 1
 
         if self.debug:
-            print(f"DEBUG: Rozpoczynam przetwarzanie pliku: {pdf_path}")
-            print(f"DEBUG: Parametry - confidence: {min_confidence}, max: {max_fragments}")
+            logger.section("PRZETWARZANIE PDF")
+            self.logger.info(f"Plik: {pdf_path}")
+            self.logger.info(f"Parametry - confidence: {min_confidence}, max: {max_fragments}")
 
         # Sprawdzamy czy plik jest prawidłowy
         is_valid, validation_message = self.pdf_processor.validate_pdf_file(pdf_path)
         if not is_valid:
-            error_msg = f"Błąd walidacji pliku: {validation_message}"
-            print(error_msg)
-            if self.debug:
-                print(f"DEBUG ERROR: {error_msg}")
+            self.logger.error(f"Walidacja pliku nieudana: {validation_message}")
             return []
+
+        self.logger.success("Plik PDF zwalidowany pomyślnie")
 
         # Wyciągamy tekst
         text = self.pdf_processor.extract_text_from_pdf(pdf_path)
@@ -353,7 +361,7 @@ class FragmentDetector:
             return []
 
         if self.debug:
-            print(f"DEBUG: Wyciągnięto {len(text)} znaków tekstu")
+            self.logger.debug(f"Wyciągnięto {len(text)} znaków tekstu")
 
         try:
             # Znajdujemy śmieszne fragmenty
@@ -397,27 +405,35 @@ class FragmentDetector:
             print("- Nie znaleziono słów kluczowych w tekście")
             print("- Sprawdź czy plik zawiera właściwy transkrypt")
 
-    def _print_results_summary(self, all_fragments: List[FunnyFragment],
+    @staticmethod
+    def _print_results_summary(all_fragments: List[FunnyFragment],
                                returned_fragments: List[FunnyFragment],
                                min_confidence: float):
-        """Wyświetla podsumowanie wyników"""
-        if all_fragments:
-            avg_confidence = sum(f.confidence_score for f in all_fragments) / len(all_fragments)
-            print(f"\n=== PODSUMOWANIE WYNIKÓW ===")
-            print(f"Znaleziono: {len(all_fragments)} fragmentów, zwracam: {len(returned_fragments)}")
-            print(f"Średnia pewność: {avg_confidence:.3f}")
-            print(f"Najlepsza pewność: {all_fragments[0].confidence_score:.3f}")
+        """Wyświetla kolorowe podsumowanie wyników"""
+        if not all_fragments:
+            return
 
-            if len(all_fragments) > 1:
-                print(f"Najgorsza pewność: {all_fragments[-1].confidence_score:.3f}")
+        logger.section("PODSUMOWANIE WYNIKÓW")
 
-            # Podsumowanie jakości
-            high_quality = len([f for f in all_fragments if f.confidence_score >= 0.7])
-            medium_quality = len([f for f in all_fragments if 0.4 <= f.confidence_score < 0.7])
-            low_quality = len([f for f in all_fragments if f.confidence_score < 0.4])
+        avg_confidence = sum(f.confidence_score for f in all_fragments) / len(all_fragments)
 
-            print(f"Jakość fragmentów - wysoka (≥0.7): {high_quality}, "
-                  f"średnia (0.4-0.7): {medium_quality}, niska (<0.4): {low_quality}")
+        logger.keyvalue("Znalezione fragmenty", str(len(all_fragments)), Colors.GREEN)
+        logger.keyvalue("Zwracane fragmenty", str(len(returned_fragments)), Colors.BLUE)
+        logger.keyvalue("Średnia pewność", f"{avg_confidence:.3f}", Colors.YELLOW)
+        logger.keyvalue("Najlepsza pewność", f"{all_fragments[0].confidence_score:.3f}", Colors.GREEN)
+
+        if len(all_fragments) > 1:
+            logger.keyvalue("Najgorsza pewność", f"{all_fragments[-1].confidence_score:.3f}", Colors.RED)
+
+        # Analiza jakości z kolorowym wykresem
+        high_quality = len([f for f in all_fragments if f.confidence_score >= 0.7])
+        medium_quality = len([f for f in all_fragments if 0.4 <= f.confidence_score < 0.7])
+        low_quality = len([f for f in all_fragments if f.confidence_score < 0.4])
+
+        logger.info("Rozkład jakości fragmentów:")
+        logger.keyvalue("  Wysoka jakość (≥0.7)", str(high_quality), Colors.GREEN)
+        logger.keyvalue("  Średnia jakość (0.4-0.7)", str(medium_quality), Colors.YELLOW)
+        logger.keyvalue("  Niska jakość (<0.4)", str(low_quality), Colors.RED)
 
     def _print_processing_stats(self):
         """Wyświetla statystyki przetwarzania"""

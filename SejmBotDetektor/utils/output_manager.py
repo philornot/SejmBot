@@ -3,13 +3,16 @@ Moduł do zarządzania wynikami i formatowania wyjścia
 """
 import json
 from typing import List
-from models.funny_fragment import FunnyFragment
+
+from SejmBotDetektor.models.funny_fragment import FunnyFragment
+from SejmBotDetektor.utils.logger import get_module_logger
 
 
 class OutputManager:
     """Klasa do zarządzania formatowaniem i zapisem wyników"""
 
     def __init__(self, debug: bool = False):
+        self.logger = get_module_logger("OutputManager")
         self.debug = debug
 
     def save_fragments_to_json(self, fragments: List[FunnyFragment], output_file: str) -> bool:
@@ -29,18 +32,16 @@ class OutputManager:
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(fragments_dict, f, ensure_ascii=False, indent=2)
 
-            print(f"Zapisano {len(fragments)} fragmentów do {output_file}")
+            self.logger.info(f"Zapisano {len(fragments)} fragmentów do {output_file}")
 
             if self.debug:
-                print(f"DEBUG: Pomyślnie zapisano plik JSON: {output_file}")
+                self.logger.debug(f"Pomyślnie zapisano plik JSON: {output_file}")
 
             return True
 
         except Exception as e:
             error_msg = f"Błąd podczas zapisywania do {output_file}: {e}"
-            print(error_msg)
-            if self.debug:
-                print(f"DEBUG ERROR: {error_msg}")
+            self.logger.error(error_msg)
             return False
 
     def load_fragments_from_json(self, input_file: str) -> List[FunnyFragment]:
@@ -60,18 +61,18 @@ class OutputManager:
             fragments = [FunnyFragment.from_dict(data) for data in fragments_data]
 
             if self.debug:
-                print(f"DEBUG: Wczytano {len(fragments)} fragmentów z {input_file}")
+                self.logger.debug(f"Wczytano {len(fragments)} fragmentów z {input_file}")
 
             return fragments
 
         except FileNotFoundError:
-            print(f"Plik {input_file} nie został znaleziony")
+            self.logger.error(f"Plik {input_file} nie został znaleziony")
             return []
         except json.JSONDecodeError as e:
-            print(f"Błąd parsowania JSON w pliku {input_file}: {e}")
+            self.logger.error(f"Błąd parsowania JSON w pliku {input_file}: {e}")
             return []
         except Exception as e:
-            print(f"Błąd podczas wczytywania z {input_file}: {e}")
+            self.logger.error(f"Błąd podczas wczytywania z {input_file}: {e}")
             return []
 
     def print_fragments(self, fragments: List[FunnyFragment], max_fragments: int = 10):
@@ -83,19 +84,23 @@ class OutputManager:
             max_fragments: Maksymalna liczba fragmentów do pokazania
         """
         if not fragments:
-            print("Brak fragmentów do wyświetlenia")
+            self.logger.warning("Brak fragmentów do wyświetlenia")
             return
 
-        print(f"\n=== NAJLEPSZE FRAGMENTY (pokazano {min(len(fragments), max_fragments)} z {len(fragments)}) ===\n")
+        self.logger.info(
+            f"\n=== NAJLEPSZE FRAGMENTY (pokazano {min(len(fragments), max_fragments)} z {len(fragments)}) ===\n")
 
         for i, fragment in enumerate(fragments[:max_fragments]):
-            print(f"--- FRAGMENT {i + 1} (Pewność: {fragment.confidence_score:.2f}) ---")
-            print(f"Mówca: {fragment.speaker}")
-            print(f"Słowa kluczowe: {fragment.get_keywords_as_string()}")
-            print(f"Tekst: {fragment.get_short_preview(200)}")
+            log_message = (
+                f"--- FRAGMENT {i + 1} (Pewność: {fragment.confidence_score:.2f}) ---\n"
+                f"Mówca: {fragment.speaker}\n"
+                f"Słowa kluczowe: {fragment.get_keywords_as_string()}\n"
+                f"Tekst: {fragment.get_short_preview(200)}\n"
+            )
             if fragment.position_in_text != -1:
-                print(f"Pozycja w tekście: {fragment.position_in_text}")
-            print()
+                log_message += f"Pozycja w tekście: {fragment.position_in_text}\n"
+
+            self.logger.info(log_message)
 
     def print_fragments_summary(self, fragments: List[FunnyFragment]):
         """
@@ -105,11 +110,13 @@ class OutputManager:
             fragments: Lista fragmentów do analizy
         """
         if not fragments:
-            print("Brak fragmentów do podsumowania")
+            self.logger.warning("Brak fragmentów do podsumowania")
             return
 
-        print(f"\n=== PODSUMOWANIE FRAGMENTÓW ===")
-        print(f"Łączna liczba fragmentów: {len(fragments)}")
+        summary_message = (
+            f"\n=== PODSUMOWANIE FRAGMENTÓW ===\n"
+            f"Łączna liczba fragmentów: {len(fragments)}\n"
+        )
 
         if fragments:
             confidences = [f.confidence_score for f in fragments]
@@ -117,19 +124,26 @@ class OutputManager:
             min_confidence = min(confidences)
             max_confidence = max(confidences)
 
-            print(f"Średnia pewność: {avg_confidence:.2f}")
-            print(f"Minimalna pewność: {min_confidence:.2f}")
-            print(f"Maksymalna pewność: {max_confidence:.2f}")
+            summary_message += (
+                f"Średnia pewność: {avg_confidence:.2f}\n"
+                f"Minimalna pewność: {min_confidence:.2f}\n"
+                f"Maksymalna pewność: {max_confidence:.2f}\n"
+            )
+
+        self.logger.info(summary_message)
 
         # Analiza mówców
         speakers = {}
         for fragment in fragments:
             speakers[fragment.speaker] = speakers.get(fragment.speaker, 0) + 1
 
-        print(f"\nTop 5 mówców:")
+        analysis_message = "\n=== ANALIZA FRAGMENTÓW ===\n"
+
+        # Top 5 mówców
+        analysis_message += "\nTop 5 mówców:\n"
         sorted_speakers = sorted(speakers.items(), key=lambda x: x[1], reverse=True)
         for speaker, count in sorted_speakers[:5]:
-            print(f"  {speaker}: {count} fragmentów")
+            analysis_message += f"  {speaker}: {count} fragmentów\n"
 
         # Analiza słów kluczowych
         all_keywords = []
@@ -141,12 +155,12 @@ class OutputManager:
             for keyword in all_keywords:
                 keyword_counts[keyword] = keyword_counts.get(keyword, 0) + 1
 
-            print(f"\nNajczęściej występujące słowa kluczowe:")
+            analysis_message += "\nNajczęściej występujące słowa kluczowe:\n"
             sorted_keywords = sorted(keyword_counts.items(), key=lambda x: x[1], reverse=True)
             for keyword, count in sorted_keywords[:10]:
-                print(f"  '{keyword}': {count} razy")
+                analysis_message += f"  '{keyword}': {count} razy\n"
 
-        print()
+        self.logger.info(analysis_message)
 
     def export_fragments_to_csv(self, fragments: List[FunnyFragment], output_file: str) -> bool:
         """
@@ -181,9 +195,9 @@ class OutputManager:
                         'timestamp': fragment.timestamp
                     })
 
-            print(f"Wyeksportowano {len(fragments)} fragmentów do {output_file}")
+            self.logger.info(f"Wyeksportowano {len(fragments)} fragmentów do {output_file}")
             return True
 
         except Exception as e:
-            print(f"Błąd podczas eksportu do CSV: {e}")
+            self.logger.error(f"Błąd podczas eksportu do CSV: {e}")
             return False

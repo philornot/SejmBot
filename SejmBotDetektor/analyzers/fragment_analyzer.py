@@ -4,7 +4,8 @@ Moduł do analizy i oceny fragmentów tekstu pod kątem humoru
 import re
 from typing import List, Tuple
 
-from config.keywords import KeywordsConfig
+from SejmBotDetektor.config.keywords import KeywordsConfig
+from SejmBotDetektor.utils.logger import get_module_logger
 
 
 class FragmentAnalyzer:
@@ -12,6 +13,7 @@ class FragmentAnalyzer:
 
     def __init__(self, debug: bool = False):
         self.debug = debug
+        self.logger = get_module_logger("FragmentAnalyzer")
         self.funny_keywords = KeywordsConfig.get_funny_keywords()
         self.exclude_keywords = KeywordsConfig.get_exclude_keywords()
         self._compile_keyword_patterns()
@@ -20,12 +22,11 @@ class FragmentAnalyzer:
         """Prekompiluje wzorce regex dla słów kluczowych dla lepszej wydajności"""
         self.keyword_patterns = {}
         for keyword in self.funny_keywords.keys():
-            # Tworzymy wzorzec z granicami słów i obsługą polskich znaków
             pattern = r'\b' + re.escape(keyword) + r'[a-ząćęłńóśźż]*\b'
             self.keyword_patterns[keyword] = re.compile(pattern, re.IGNORECASE)
 
         if self.debug:
-            print(f"DEBUG: Skompilowano {len(self.keyword_patterns)} wzorców słów kluczowych")
+            self.logger.debug(f"Skompilowano {len(self.keyword_patterns)} wzorców słów kluczowych")
 
     def find_keywords_in_text(self, text: str) -> List[Tuple[str, int]]:
         """
@@ -44,9 +45,8 @@ class FragmentAnalyzer:
             for match in matches:
                 found_keywords.append((keyword, match.start()))
                 if self.debug:
-                    print(f"DEBUG: Znaleziono '{keyword}' na pozycji {match.start()}: '{match.group()}'")
+                    self.logger.debug(f"Znaleziono '{keyword}' na pozycji {match.start()}: '{match.group()}'")
 
-        # Sortujemy według pozycji
         found_keywords.sort(key=lambda x: x[1])
         return found_keywords
 
@@ -64,7 +64,7 @@ class FragmentAnalyzer:
             if keyword == clean_word or (len(keyword) > 4 and keyword in clean_word):
                 found_keywords.append(keyword)
                 if self.debug:
-                    print(f"DEBUG: Dopasowanie '{keyword}' w słowie '{clean_word}'")
+                    self.logger.debug(f"Dopasowanie '{keyword}' w słowie '{clean_word}'")
 
         return found_keywords
 
@@ -92,10 +92,10 @@ class FragmentAnalyzer:
                 if pattern.search(fragment_text):
                     verified_keywords.append(keyword)
                     if self.debug:
-                        print(f"DEBUG: Zweryfikowano słowo '{keyword}' w fragmencie")
+                        self.logger.debug(f"Zweryfikowano słowo '{keyword}' w fragmencie")
                 else:
                     if self.debug:
-                        print(f"DEBUG: UWAGA! Słowo '{keyword}' nie zostało zweryfikowane!")
+                        self.logger.debug(f"UWAGA! Słowo '{keyword}' nie zostało zweryfikowane!")
             else:
                 # Fallback dla starych wywołań
                 if keyword in fragment_lower:
@@ -125,7 +125,7 @@ class FragmentAnalyzer:
         # Jeśli za dużo słów wykluczających, bardzo niska pewność
         if exclude_count > 4:
             if self.debug:
-                print(f"DEBUG: Za dużo słów wykluczających ({exclude_count})")
+                self.logger.debug(f"Za dużo słów wykluczających ({exclude_count})")
             return 0.1
 
         # Obliczamy bazowy wynik na podstawie wag słów kluczowych
@@ -155,7 +155,7 @@ class FragmentAnalyzer:
         confidence = max(0.1, min(0.95, final_score))
 
         if self.debug:
-            print(f"DEBUG: Pewność - base: {base_score:.2f}, variety: +{variety_bonus:.2f}, "
+            self.logger.debug(f"Pewność - base: {base_score:.2f}, variety: +{variety_bonus:.2f}, "
                   f"exclude: -{exclude_penalty:.2f}, length_mod: {length_modifier:.2f}, "
                   f"final: {confidence:.2f}")
 
@@ -205,7 +205,7 @@ class FragmentAnalyzer:
 
             if similarity > similarity_threshold or start_similarity > 0.8:
                 if self.debug:
-                    print(f"DEBUG: Duplikat - podobieństwo: {similarity:.2f}, start: {start_similarity:.2f}")
+                    self.logger.debug(f"Duplikat - podobieństwo: {similarity:.2f}, start: {start_similarity:.2f}")
                 return True
 
         return False

@@ -10,15 +10,15 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from SejmBotScraper.config import SejmBotConfig
+from SejmBotScraper.downloader import FileDownloader
+from SejmBotScraper.models import SejmSession, ProcessingStats
+from SejmBotScraper.parsers import ParsingManager
+from SejmBotScraper.session_finder import SessionFinder
+from SejmBotScraper.storage import SessionStorage, ProcessedSessionsTracker, IndexManager
+
 # Dodaj aktualny katalog do PYTHONPATH
 sys.path.append(str(Path(__file__).parent))
-
-from config import SejmBotConfig
-from models import SejmSession, ProcessingStats
-from storage import SessionStorage, ProcessedSessionsTracker, IndexManager
-from session_finder import SessionFinder
-from downloader import FileDownloader
-from parsers import ParsingManager
 
 
 class SejmBot:

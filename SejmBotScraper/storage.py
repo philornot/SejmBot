@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Set
 
-from models import SejmSession
+from SejmBotScraper.models import SejmSession
 
 
 class SessionStorage:
