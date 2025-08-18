@@ -349,12 +349,12 @@ class FragmentDetector:
             self.logger.error(f"Ścieżka {folder_path} nie jest folderem")
             return []
 
-        # Szukamy plików PDF (case-insensitive)
-        for pattern in ['*.pdf', '*.PDF']:
-            pdf_files.extend(folder.glob(pattern))
+        # Szukamy wszystkich plików i filtrujemy po rozszerzeniu (case-insensitive)
+        for file_path in folder.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() == '.pdf':
+                pdf_files.append(str(file_path))
 
-        # Konwertujemy Path objects na stringi i sortujemy
-        pdf_files = [str(path) for path in pdf_files]
+        # Sortujemy pliki
         pdf_files.sort()
 
         if self.debug:
