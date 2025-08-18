@@ -95,6 +95,16 @@ def main():
         output_manager = OutputManager(debug=debug_mode, output_folder=output_folder)
         logger.success("Komponenty zainicjalizowane")
 
+        # Przygotowujemy konfigurację do zapisania w metadanych
+        export_config = {
+            "min_confidence": min_confidence,
+            "max_fragments_per_file": max_fragments_per_file,
+            "max_total_fragments": max_total_fragments,
+            "context_before": context_before,
+            "context_after": context_after,
+            "debug_mode": debug_mode
+        }
+
         # Przetwarzanie
         if path.is_dir():
             # Przetwarzanie folderu
@@ -116,11 +126,14 @@ def main():
             # Pobieramy wszystkie fragmenty posortowane według pewności
             fragments = detector.get_all_fragments_sorted(results)
 
-            # Eksport do wszystkich formatów
+            # Eksport wyników
             logger.section("ZAPIS WYNIKÓW")
 
-            if output_manager.export_folder_results(results, "folder_results"):
-                logger.success("Wszystkie eksporty zakończone pomyślnie")
+            # Eksport w nowym formacie - HTML tylko w trybie debug
+            include_html = debug_mode
+
+            if output_manager.export_results(results, "batch_results", include_html, export_config):
+                logger.success("Eksport zakończony pomyślnie")
             else:
                 logger.warning("Niektóre eksporty mogły się nie powieść")
 
@@ -140,11 +153,14 @@ def main():
             # Wyświetlenie wyników w konsoli
             output_manager.print_results(fragments, max_fragments=5)
 
-            # Eksport do wszystkich formatów
+            # Eksport wyników
             logger.section("ZAPIS WYNIKÓW")
 
-            if output_manager.export_fragments(fragments, "funny_fragments"):
-                logger.success("Wszystkie eksporty zakończone pomyślnie")
+            # Eksport w nowym formacie - HTML tylko w trybie debug
+            include_html = debug_mode
+
+            if output_manager.export_results(fragments, "fragments", include_html, export_config):
+                logger.success("Eksport zakończony pomyślnie")
             else:
                 logger.warning("Niektóre eksporty mogły się nie powieść")
 
@@ -242,8 +258,15 @@ def run_example_with_folder():
                 best_fragment = max(fragments, key=lambda f: f.confidence_score)
                 print(f"   Najlepszy: {best_fragment.get_short_preview(80)}")
 
-            # Eksportujemy wyniki
-            if output_manager.export_folder_results(results, "example_folder_results"):
+            # Eksportujemy wyniki w nowym formacie
+            export_config = {
+                "min_confidence": 0.4,
+                "max_fragments_per_file": 10,
+                "max_total_fragments": 50,
+                "example_run": True
+            }
+
+            if output_manager.export_results(results, "example_batch", True, export_config):
                 print(f"\nWyniki wyeksportowane pomyślnie!")
 
             # Wyświetlamy podsumowanie
@@ -281,6 +304,9 @@ def interactive_mode():
     debug_input = input("Tryb debugowania? (t/n, Enter = n): ").strip().lower()
     debug_mode = debug_input in ['t', 'tak', 'true', 'yes']
 
+    html_input = input("Generować raport HTML? (t/n, Enter = n): ").strip().lower()
+    include_html = html_input in ['t', 'tak', 'true', 'yes']
+
     # Sprawdzamy czy to folder
     path = Path(pdf_path)
     if path.is_dir():
@@ -296,6 +322,15 @@ def interactive_mode():
     detector = FragmentDetector(debug=debug_mode)
     output_manager = OutputManager(debug=debug_mode, output_folder=output_folder)
 
+    # Konfiguracja do zapisania w metadanych
+    export_config = {
+        "min_confidence": min_confidence,
+        "max_fragments": max_fragments,
+        "max_per_file": max_per_file,
+        "interactive_mode": True,
+        "user_requested_html": include_html
+    }
+
     try:
         if path.is_dir():
             results = detector.process_pdf_folder(
@@ -304,6 +339,10 @@ def interactive_mode():
             if results:
                 output_manager.print_folder_results(results)
                 fragments = detector.get_all_fragments_sorted(results)
+
+                # Eksport w nowym formacie
+                if output_manager.export_results(results, "interactive_batch", include_html, export_config):
+                    print("Wyniki z folderu zostały zapisane!")
             else:
                 fragments = []
         else:
@@ -311,17 +350,12 @@ def interactive_mode():
             if fragments:
                 output_manager.print_results(fragments)
 
-        if fragments:
-            save_input = input("\nZapisać wyniki do pliku? (t/n): ").strip().lower()
-            if save_input in ['t', 'tak', 'true', 'yes']:
-                if path.is_dir() and results:
-                    if output_manager.export_folder_results(results, "interactive_results"):
-                        print("Wyniki z folderu zostały zapisane!")
-                else:
-                    if output_manager.export_fragments(fragments, "interactive_fragments"):
-                        print("Fragmenty zostały zapisane!")
+                # Eksport w nowym formacie
+                if output_manager.export_results(fragments, "interactive_fragments", include_html, export_config):
+                    print("Fragmenty zostały zapisane!")
 
-                output_manager.print_export_summary()
+        if fragments:
+            output_manager.print_export_summary()
 
     except Exception as e:
         print(f"Błąd: {e}")

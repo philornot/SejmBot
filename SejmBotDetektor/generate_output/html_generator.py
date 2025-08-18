@@ -129,7 +129,7 @@ class HtmlGenerator:
         </head>
         <body>
         <div class="header">
-            <h1>🎭 {title}</h1>
+            <h1>{title}</h1>
             <p>Raport wygenerowany automatycznie • {fragment_count} fragmentów</p>
         </div>
         """
