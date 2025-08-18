@@ -11,31 +11,36 @@ class KeywordsConfig:
     # Słowa kluczowe z wagami (wyższe = bardziej prawdopodobne, że śmieszne)
     FUNNY_KEYWORDS: Dict[str, int] = {
         # Bardzo wysokie prawdopodobieństwo (waga 4) - oczywiste markery humoru
-        'śmiech': 4, 'haha': 4, 'hihi': 4, 'śmieszny': 4, 'rozbawienie': 4,
-        'żart': 4, 'żartuje': 4, 'komiczny': 4, 'humorystyczny': 4,
-        'cyrk': 4, 'farsa': 4, 'kabaret': 4,
-        'bzdura': 4, 'nonsens': 4, 'brednie': 4,
-        'gafa': 4, 'wpadka': 4, 'lapsus': 4,
+        'śmiech': 4, 'haha': 4, 'hihi': 4, 'lol': 4,
+        'śmieszny': 4, 'rozbawienie': 4,
+        'żart': 4, 'żartuje': 4, 'żarcik': 4,
+        'komiczny': 4, 'humorystyczny': 4, 'dowcip': 4, 'gag': 4,
+        'cyrk': 4, 'farsa': 4, 'kabaret': 4, 'opera mydlana': 4,
+        'bzdura': 4, 'nonsens': 4, 'brednie': 4, 'absurd': 4,
+        'gafa': 4, 'wpadka': 4, 'lapsus': 4, 'autokompromitacja': 4,
 
         # Wysokie prawdopodobieństwo (waga 3) - silne wskaźniki
         'absurdalny': 3, 'niedorzeczny': 3, 'groteskowy': 3,
         'skandaliczny': 3, 'niewiarygodny': 3, 'szokujący': 3,
-        'zabawny': 3, 'rozśmieszać': 3, 'ubaw': 3,
-        'teatr': 3, 'spektakl': 3, 'przedstawienie': 3,
-        'gwizdy': 3, 'buczenie': 3, 'wrzawa': 3, 'tumult': 3,
+        'zabawny': 3, 'rozśmieszać': 3, 'ubaw': 3, 'śmieszyć': 3,
+        'teatr': 3, 'spektakl': 3, 'przedstawienie': 3, 'szopka': 3,
+        'parodia': 3, 'kpina': 3, 'drwina': 3, 'ironia': 3,
+        'groteska': 3, 'skecz': 3,
+        'gwizdy': 3, 'buczenie': 3, 'wrzawa': 3, 'tumult': 3, 'chałturzenie': 3,
 
         # Średnie prawdopodobieństwo (waga 2) - kontekstowe wskaźniki
         'chaos': 2, 'zamieszanie': 2, 'bałagan': 2, 'awantura': 2,
-        'nieporozumienie': 2, 'pomyłka': 2, 'błąd': 2,
-        'ironiczny': 2, 'sarkastyczny': 2, 'kpić': 2,
-        'oklaski': 2, 'brawa': 2, 'aplauz': 2,
-        'dziwny': 2, 'osobliwy': 2, 'niezwykły': 2,
+        'nieporozumienie': 2, 'pomyłka': 2, 'błąd': 2, 'omyłka': 2,
+        'ironiczny': 2, 'sarkastyczny': 2, 'sarkazm': 2, 'kpić': 2, 'kpiarski': 2,
+        'dziwny': 2, 'osobliwy': 2, 'niezwykły': 2, 'nietypowy': 2,
+        'komentarze z sali': 2, 'docinki': 2, 'śmiesznostka': 2,
 
         # Niskie prawdopodobieństwo (waga 1) - wymagają kontekstu
         'ciekawy': 1, 'interesujący': 1, 'zaskakujący': 1,
-        'naprawdę': 1, 'serio': 1, 'poważnie': 1,
-        'show': 1, 'występ': 1,
-        'reakcja': 1, 'odzew': 1, 'odpowiedź': 1
+        'naprawdę': 1, 'serio': 1, 'poważnie': 1, 'tak sobie': 1,
+        'show': 1, 'występ': 1, 'reality': 1,
+        'reakcja': 1, 'odzew': 1, 'odpowiedź': 1,
+        'efektowny': 1, 'dziwactwo': 1
     }
 
     # Słowa wykluczające — wskazujące na formalne części dokumentu
@@ -61,8 +66,12 @@ class KeywordsConfig:
 
         # Prawnicze
         'konstytucja', 'kodeks', 'rozporządzenie', 'obwieszczenie',
-        'dziennik', 'ustaw', 'monitor', 'polski'
+        'dziennik', 'ustaw', 'monitor', 'polski',
+
+        # Elementy protokołu (nie są humorem)
+        'oklaski', 'brawa', 'aplauz', 'dzwonek'
     }
+
 
     # Cache dla skompilowanych wzorców
     _compiled_patterns = {}
