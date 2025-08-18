@@ -176,7 +176,8 @@ class TextProcessor:
         fragment_words = words[start_idx:end_idx]
         fragment_text = ' '.join(fragment_words)
 
-        if self.debug:
-            self.logger.debug(f"Wyciągnięto kontekst [{start_idx}:{end_idx}] = {len(fragment_words)} słów")
+        # spam:
+        # if self.debug:
+        #     self.logger.debug(f"Wyciągnięto kontekst [{start_idx}:{end_idx}] = {len(fragment_words)} słów")
 
         return fragment_text

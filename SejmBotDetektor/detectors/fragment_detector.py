@@ -273,8 +273,9 @@ class FragmentDetector:
         )
 
         if should_skip:
-            if self.debug:
-                self.logger.debug(f"Pomijam fragment: {skip_reason}")
+            # spam:
+            # if self.debug:
+            #     self.logger.debug(f"Pomijam fragment: {skip_reason}")
             if "pewność za niska" in skip_reason.lower():
                 self.stats['skipped_low_confidence'] += 1
             return None

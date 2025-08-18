@@ -11,7 +11,6 @@ from SejmBotDetektor.utils.logger import get_module_logger
 class OutputManager:
     """Klasa do zarządzania formatowaniem i zapisem wyników"""
 
-    # todo: użyj mnie w main.py pls :)
     def generate_html_report(self, fragments: List[FunnyFragment], output_file: str = "report.html") -> bool:
         """
         Generuje raport HTML z fragmentami
