@@ -21,7 +21,7 @@ Zaimplementowany został podstawowy detektor fragmentów, który:
 
 1. ✅ Wczytuje pliki PDF z transkryptami Sejmu
 2. ✅ Wykrywa słowa kluczowe mogące wskazywać na śmieszność
-3. ✅ Wyodrębnia fragmenty z kontekstem (domyślnie ±50 słów)
+3. ✅ Wyodrębnia fragmenty z kontekstem
 4. ✅ Zapisuje metadane (mówca, posiedzenie, poziom pewności)
 5. ✅ Eksportuje wyniki do JSON/CSV
 
