@@ -171,7 +171,7 @@ class ConsolePrinter:
         avg_confidence = sum(f.confidence_score for f in fragments) / len(fragments)
         best_fragment = max(fragments, key=lambda f: f.confidence_score)
 
-        self.logger.info(f"\n📄 {file_index}. {file_name}")
+        self.logger.info(f"\n{file_index}. {file_name}")
         self.logger.keyvalue("  Fragmenty", str(len(fragments)), Colors.CYAN)
         self.logger.keyvalue("  Średnia pewność", f"{avg_confidence:.3f}", Colors.YELLOW)
         self.logger.keyvalue("  Najlepszy fragment", f"{best_fragment.confidence_score:.3f} - {best_fragment.speaker}",
