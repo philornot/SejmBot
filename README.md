@@ -1,4 +1,4 @@
-# SejmBot - Detektor śmiesznych momentów z polskiego parlamentu
+# SejmBot — Detektor śmiesznych momentów z polskiego parlamentu
 
 **SejmBot** to system do automatycznego wykrywania humorystycznych i absurdalnych fragmentów z posiedzeń Sejmu RP.
 Projekt analizuje transkrypty parlamentarne w poszukiwaniu zabawnych wypowiedzi polityków, wykorzystując algorytm oparty
@@ -42,14 +42,30 @@ Zaimplementowany został podstawowy detektor fragmentów, który:
 - **Średniej pewności:** chaos, skandaliczny, awantura, oklaski
 - **Niskiej pewności:** teatr, naprawdę, serio (wymagają kontekstu)
 
-### Konfiguracja parametrów
+## Przykłady konfiguracji
 
+### Restrykcyjne przetwarzanie (tylko najlepsze)
 ```python
-# W pliku main_refactored.py
-min_confidence = 0.4  # Próg pewności (0.0-1.0)
-max_fragments = 20  # Max liczba wyników  
-context_before = 30  # Słowa przed kluczowym
-context_after = 30  # Słowa po kluczowym
+pdf_path = "transkrypty_sejmu"
+min_confidence = 0.6           # Wysoki próg pewności
+max_fragments_per_file = 5     # Mało fragmentów z każdego pliku
+max_total_fragments = 25       # Mały limit całkowity
+```
+
+### Obszerne przetwarzanie (więcej wyników)
+```python
+pdf_path = "transkrypty_sejmu"
+min_confidence = 0.2           # Niski próg pewności
+max_fragments_per_file = 50    # Dużo fragmentów z każdego pliku
+max_total_fragments = 500      # Duży limit całkowity
+```
+
+### Zbalansowane przetwarzanie
+```python
+pdf_path = "transkrypty"
+min_confidence = 0.3
+max_fragments_per_file = 20
+max_total_fragments = 100
 ```
 
 ## Algorytm wykrywania
@@ -57,10 +73,10 @@ context_after = 30  # Słowa po kluczowym
 System używa wielokryterialnej analizy:
 
 1. **Wyszukiwanie słów kluczowych** z wagami (1-3 punkty)
-2. **Analiza kontekstu** - wykluczenie formalnych części
-3. **Ocena długości** - preferowane fragmenty 20+ słów
-4. **Bonus za różnorodność** - wiele różnych słów kluczowych
-5. **Identyfikacja mówcy** - wyższy priorytet dla znanych polityków
+2. **Analiza kontekstu** — wykluczenie formalnych części
+3. **Ocena długości** — preferowane fragmenty 20+ słów
+4. **Bonus za różnorodność** — wiele różnych słów kluczowych
+5. **Identyfikacja mówcy** — wyższy priorytet dla znanych polityków
 
 ## Przyszłe etapy
 
@@ -116,33 +132,43 @@ Zapewnia szczegółowe logi:
 
 ## Format wyjściowy
 
-### JSON
+### JSON z wynikami z folderu
 
 ```json
 {
-  "text": "Fragment wypowiedzi...",
-  "speaker": "Jan Kowalski",
-  "meeting_info": "15. posiedzenie Sejmu X kadencji",
-  "keywords_found": [
-    "śmiech",
-    "cyrk"
-  ],
-  "confidence_score": 0.85,
-  "timestamp": "2024-01-15T10:30:00"
+  "summary": {
+    "total_files": 5,
+    "total_fragments": 47,
+    "files_processed": ["plik1.pdf", "plik2.pdf", ...]
+  },
+  "files": {
+    "plik1.pdf": {
+      "fragment_count": 12,
+      "avg_confidence": 0.65,
+      "fragments": [...]
+    }
+  }
 }
 ```
 
 ### CSV
 
-Kolumny: speaker, confidence_score, keywords_found, text_preview, meeting_info
+Kolumny: source_file, speaker, confidence_score, keywords_found, text_preview, meeting_info
 
-## 📄 Licencja
+## Limitacje
+
+* Maksymalnie `max_total_fragments` fragmentów w końcowym wyniku
+* Fragmenty są wybierane według najwyższej pewności
+* Bardzo duże foldery mogą wymagać czasu na przetworzenie
+* Każdy plik PDF musi być prawidłowy i zawierać tekst
+
+## Licencja
 
 Projekt stworzony w celach edukacyjnych i rozrywkowych.
 Wykorzystuje publiczne transkrypty z posiedzeń Sejmu RP.
 
 [Oprogramowanie jest na licencji MIT.](https://github.com/philornot/SejmBot/blob/main/LICENSE)
 
-
-### ej aj?
+---
+#### ej aj?
 tak, sejmbot jest rozwijany przy pomocy chatbotów :> (dopóki działa to czemu nie?)

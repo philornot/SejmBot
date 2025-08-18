@@ -1,7 +1,9 @@
 """
 Główny moduł do wykrywania śmiesznych fragmentów w transkryptach Sejmu
 """
-from typing import List, Optional, Tuple
+import os
+from pathlib import Path
+from typing import List, Optional, Tuple, Dict
 
 from SejmBotDetektor.analyzers.fragment_analyzer import FragmentAnalyzer
 from SejmBotDetektor.models.funny_fragment import FunnyFragment
@@ -53,19 +55,23 @@ class FragmentDetector:
             'found_keywords': 0,
             'created_fragments': 0,
             'skipped_duplicates': 0,
-            'skipped_low_confidence': 0
+            'skipped_low_confidence': 0,
+            'processed_files': 0,
+            'failed_files': 0
         }
 
         if self.debug:
             self.logger.debug(f"Inicjalizowano z kontekstem: {context_before}/{context_after}")
 
-    def find_funny_fragments(self, text: str, min_confidence: float = 0.3) -> List[FunnyFragment]:
+    def find_funny_fragments(self, text: str, min_confidence: float = 0.3, source_file: str = None) -> List[
+        FunnyFragment]:
         """
         Znajduje śmieszne fragmenty w tekście - ulepszona wersja
 
         Args:
             text: Tekst do przeanalizowania
             min_confidence: Minimalny próg pewności (0.1-0.95)
+            source_file: Nazwa pliku źródłowego (dla debugowania)
 
         Returns:
             Lista znalezionych fragmentów
@@ -73,7 +79,7 @@ class FragmentDetector:
         # Walidacja parametrów
         if not text or not text.strip():
             if self.debug:
-                self.logger.debug("Pusty tekst wejściowy")
+                self.logger.debug(f"Pusty tekst wejściowy {f'w pliku {source_file}' if source_file else ''}")
             return []
 
         if not 0.1 <= min_confidence <= 0.95:
@@ -83,7 +89,7 @@ class FragmentDetector:
         cleaned_text = self.text_processor.clean_text(text)
         if not cleaned_text:
             if self.debug:
-                self.logger.debug("Tekst pusty po czyszczeniu")
+                self.logger.debug(f"Tekst pusty po czyszczeniu {f'w pliku {source_file}' if source_file else ''}")
             return []
 
         # Używamy nowej metody wyszukiwania słów kluczowych
@@ -91,19 +97,25 @@ class FragmentDetector:
 
         if not keyword_positions:
             if self.debug:
-                self.logger.debug("Nie znaleziono słów kluczowych w tekście")
+                self.logger.debug(
+                    f"Nie znaleziono słów kluczowych w tekście {f'w pliku {source_file}' if source_file else ''}")
             return []
 
-        self.stats['found_keywords'] = len(keyword_positions)
+        self.stats['found_keywords'] += len(keyword_positions)
 
         fragments = []
         existing_texts = []
 
         if self.debug:
-            self.logger.debug(f"Znaleziono {len(keyword_positions)} słów kluczowych w tekście")
+            self.logger.debug(
+                f"Znaleziono {len(keyword_positions)} słów kluczowych w tekście {f'({source_file})' if source_file else ''}")
 
         # Wyciągamy informacje o posiedzeniu raz na początku
         meeting_info = self.text_processor.extract_meeting_info(text)
+
+        # Dodajemy informację o pliku źródłowym do meeting_info
+        if source_file:
+            meeting_info += f" | Plik: {source_file}"
 
         # Grupujemy blisko siebie występujące słowa kluczowe
         grouped_keywords = self._group_nearby_keywords(keyword_positions, cleaned_text)
@@ -138,8 +150,8 @@ class FragmentDetector:
         fragments.sort(key=lambda x: x.confidence_score, reverse=True)
 
         if self.debug:
-            self.logger.debug(f"Znaleziono łącznie {len(fragments)} fragmentów")
-            self._print_processing_stats()
+            self.logger.debug(
+                f"Znaleziono łącznie {len(fragments)} fragmentów {f'w pliku {source_file}' if source_file else ''}")
 
         return fragments
 
@@ -261,8 +273,9 @@ class FragmentDetector:
         )
 
         if should_skip:
-            if self.debug:
-                self.logger.debug(f"Pomijam fragment: {skip_reason}")
+            # spam:
+            # if self.debug:
+            #     self.logger.debug(f"Pomijam fragment: {skip_reason}")
             if "pewność za niska" in skip_reason.lower():
                 self.stats['skipped_low_confidence'] += 1
             return None
@@ -314,10 +327,143 @@ class FragmentDetector:
 
         return mapping
 
-    def process_pdf(self, pdf_path: str, min_confidence: float = 0.3,
-                    max_fragments: int = 50) -> List[FunnyFragment]:
+    def _find_pdf_files(self, folder_path: str) -> List[str]:
         """
-        Główna funkcja przetwarzająca PDF - ulepszona wersja
+        Znajduje wszystkie pliki PDF w folderze
+
+        Args:
+            folder_path: Ścieżka do folderu
+
+        Returns:
+            Lista ścieżek do plików PDF
+        """
+        pdf_files = []
+
+        # Konwertujemy na Path object dla lepszej obsługi ścieżek
+        folder = Path(folder_path)
+
+        if not folder.exists():
+            self.logger.error(f"Folder {folder_path} nie istnieje")
+            return []
+
+        if not folder.is_dir():
+            self.logger.error(f"Ścieżka {folder_path} nie jest folderem")
+            return []
+
+        # Szukamy wszystkich plików i filtrujemy po rozszerzeniu (case-insensitive)
+        for file_path in folder.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() == '.pdf':
+                pdf_files.append(str(file_path))
+
+        # Sortujemy pliki
+        pdf_files.sort()
+
+        if self.debug:
+            self.logger.debug(f"Znaleziono {len(pdf_files)} plików PDF w folderze {folder_path}")
+            for pdf_file in pdf_files:
+                self.logger.debug(f"  - {os.path.basename(pdf_file)}")
+
+        return pdf_files
+
+    def process_pdf_folder(self, folder_path: str, min_confidence: float = 0.3,
+                           max_fragments_per_file: int = 50, max_total_fragments: int = 200) -> Dict[
+        str, List[FunnyFragment]]:
+        """
+        Przetwarza wszystkie pliki PDF w folderze
+
+        Args:
+            folder_path: Ścieżka do folderu z plikami PDF
+            min_confidence: Minimalny próg pewności (0.1-0.95)
+            max_fragments_per_file: Maksymalna liczba fragmentów z jednego pliku
+            max_total_fragments: Maksymalna całkowita liczba fragmentów
+
+        Returns:
+            Słownik {nazwa_pliku: lista_fragmentów}
+        """
+        # Walidacja parametrów
+        if not folder_path or not isinstance(folder_path, str):
+            raise ValueError("Ścieżka folderu musi być niepustym stringiem")
+
+        if not 0.1 <= min_confidence <= 0.95:
+            raise ValueError("min_confidence musi być w zakresie 0.1-0.95")
+
+        if not isinstance(max_fragments_per_file, int) or max_fragments_per_file < 1:
+            raise ValueError("max_fragments_per_file musi być dodatnią liczbą całkowitą")
+
+        if not isinstance(max_total_fragments, int) or max_total_fragments < 1:
+            raise ValueError("max_total_fragments musi być dodatnią liczbą całkowitą")
+
+        # Resetujemy statystyki
+        self.stats = {k: 0 for k in self.stats}
+
+        if self.debug:
+            logger.section("PRZETWARZANIE FOLDERU PDF")
+            self.logger.info(f"Folder: {folder_path}")
+            self.logger.info(
+                f"Parametry - confidence: {min_confidence}, max/plik: {max_fragments_per_file}, max łącznie: {max_total_fragments}")
+
+        # Znajdujemy pliki PDF
+        pdf_files = self._find_pdf_files(folder_path)
+
+        if not pdf_files:
+            self.logger.warning(f"Nie znaleziono plików PDF w folderze {folder_path}")
+            return {}
+
+        self.logger.info(f"Znaleziono {len(pdf_files)} plików PDF do przetworzenia")
+
+        results = {}
+        total_fragments = 0
+
+        # Przetwarzamy każdy plik
+        for i, pdf_path in enumerate(pdf_files, 1):
+            file_name = os.path.basename(pdf_path)
+
+            if self.debug:
+                logger.section(f"PLIK {i}/{len(pdf_files)}: {file_name}")
+            else:
+                self.logger.info(f"Przetwarzanie pliku {i}/{len(pdf_files)}: {file_name}")
+
+            try:
+                fragments = self.process_single_pdf(
+                    pdf_path, min_confidence, max_fragments_per_file
+                )
+
+                if fragments:
+                    results[file_name] = fragments
+                    total_fragments += len(fragments)
+                    self.logger.success(f"Znaleziono {len(fragments)} fragmentów w {file_name}")
+
+                    # Sprawdzamy czy nie przekroczyliśmy limitu
+                    if total_fragments >= max_total_fragments:
+                        self.logger.warning(
+                            f"Osiągnięto limit {max_total_fragments} fragmentów, przerywanie przetwarzania")
+                        break
+                else:
+                    self.logger.info(f"Brak fragmentów spełniających kryteria w {file_name}")
+
+                self.stats['processed_files'] += 1
+
+            except Exception as e:
+                self.logger.error(f"Błąd podczas przetwarzania {file_name}: {e}")
+                self.stats['failed_files'] += 1
+                if self.debug:
+                    import traceback
+                    self.logger.debug(f"Szczegóły błędu: {traceback.format_exc()}")
+                continue
+
+        # Ograniczamy wyniki do max_total_fragments
+        if total_fragments > max_total_fragments:
+            results = self._limit_total_fragments(results, max_total_fragments)
+
+        # Pokazujemy statystyki
+        self._print_folder_results_summary(results, pdf_files)
+
+        return results
+
+    def process_single_pdf(self, pdf_path: str, min_confidence: float = 0.3,
+                           max_fragments: int = 50) -> List[FunnyFragment]:
+        """
+        Przetwarza pojedynczy plik PDF
 
         Args:
             pdf_path: Ścieżka do pliku PDF
@@ -327,124 +473,146 @@ class FragmentDetector:
         Returns:
             Lista znalezionych fragmentów
         """
-        # Walidacja parametrów
-        if not pdf_path or not isinstance(pdf_path, str):
-            raise ValueError("Ścieżka PDF musi być niepustym stringiem")
-
-        if not 0.1 <= min_confidence <= 0.95:
-            raise ValueError("min_confidence musi być w zakresie 0.1-0.95")
-
-        if not isinstance(max_fragments, int) or max_fragments < 1:
-            raise ValueError("max_fragments musi być dodatnią liczbą całkowitą")
-
-        # Resetujemy statystyki
-        self.stats = {k: 0 for k in self.stats}
-        self.stats['processed_texts'] = 1
-
-        if self.debug:
-            logger.section("PRZETWARZANIE PDF")
-            self.logger.info(f"Plik: {pdf_path}")
-            self.logger.info(f"Parametry - confidence: {min_confidence}, max: {max_fragments}")
+        file_name = os.path.basename(pdf_path)
 
         # Sprawdzamy czy plik jest prawidłowy
         is_valid, validation_message = self.pdf_processor.validate_pdf_file(pdf_path)
         if not is_valid:
-            self.logger.error(f"Walidacja pliku nieudana: {validation_message}")
+            self.logger.error(f"Walidacja {file_name} nieudana: {validation_message}")
             return []
 
-        self.logger.info("Plik PDF zwalidowany pomyślnie")
+        if self.debug:
+            self.logger.debug(f"Plik {file_name} zwalidowany pomyślnie")
 
         # Wyciągamy tekst
         text = self.pdf_processor.extract_text_from_pdf(pdf_path)
         if not text:
-            error_msg = "Nie udało się wyciągnąć tekstu z PDF"
-            self.logger.error(error_msg)
+            self.logger.error(f"Nie udało się wyciągnąć tekstu z {file_name}")
             return []
 
         if self.debug:
-            self.logger.debug(f"Wyciągnięto {len(text)} znaków tekstu")
+            self.logger.debug(f"Wyciągnięto {len(text)} znaków tekstu z {file_name}")
 
-        try:
-            # Znajdujemy śmieszne fragmenty
-            all_fragments = self.find_funny_fragments(text, min_confidence)
+        # Znajdujemy śmieszne fragmenty
+        all_fragments = self.find_funny_fragments(text, min_confidence, file_name)
 
-            if not all_fragments:
-                self.logger.warning("Nie znaleziono żadnych fragmentów spełniających kryteria")
-                self._suggest_parameter_adjustments(min_confidence, text)
-                return []
-
-            # Ograniczamy liczbę wyników
-            fragments = all_fragments[:max_fragments]
-
-            # Pokazujemy statystyki
-            self._print_results_summary(all_fragments, fragments, min_confidence)
-
-            return fragments
-
-        except Exception as e:
-            error_msg = f"Błąd podczas przetwarzania: {e}"
-            self.logger.error(error_msg)
+        if not all_fragments:
             if self.debug:
-                import traceback
-                self.logger.debug(f"Szczegóły błędu: {traceback.format_exc()}")
+                self.logger.debug(f"Nie znaleziono fragmentów w {file_name}")
             return []
 
-    def _suggest_parameter_adjustments(self, current_min_confidence: float, text: str):
-        """Sugeruje zmiany parametrów jeśli nie znaleziono fragmentów"""
-        suggestions = ["Sugestie zmian parametrów:"]
+        # Ograniczamy liczbę wyników
+        fragments = all_fragments[:max_fragments]
 
-        if current_min_confidence > 0.3:
-            suggestions.append(
-                f"- Obniż min_confidence z {current_min_confidence} "
-                f"do {max(0.2, current_min_confidence - 0.2)}"
-            )
+        if self.debug:
+            self.logger.debug(f"Zwracam {len(fragments)} najlepszych fragmentów z {file_name}")
 
-        keywords_found = self.fragment_analyzer.find_keywords_in_text(text.lower())
-        if keywords_found:
-            suggestions.append(f"- W tekście znaleziono {len(keywords_found)} słów kluczowych")
-            suggestions.append("- Spróbuj zwiększyć context_before/context_after")
-            self.logger.info("\n".join(suggestions))
+        return fragments
+
+    def _limit_total_fragments(self, results: Dict[str, List[FunnyFragment]],
+                               max_total: int) -> Dict[str, List[FunnyFragment]]:
+        """
+        Ogranicza całkowitą liczbę fragmentów do określonego limitu,
+        zachowując te o najwyższej pewności
+        """
+        # Zbieramy wszystkie fragmenty z informacją o pliku źródłowym
+        all_fragments_with_source = []
+        for file_name, fragments in results.items():
+            for fragment in fragments:
+                all_fragments_with_source.append((fragment, file_name))
+
+        # Sortujemy według pewności
+        all_fragments_with_source.sort(key=lambda x: x[0].confidence_score, reverse=True)
+
+        # Bierzemy tylko najlepsze
+        limited_fragments = all_fragments_with_source[:max_total]
+
+        # Grupujemy z powrotem według plików
+        new_results = {}
+        for fragment, file_name in limited_fragments:
+            if file_name not in new_results:
+                new_results[file_name] = []
+            new_results[file_name].append(fragment)
+
+        return new_results
+
+    def _print_folder_results_summary(self, results: Dict[str, List[FunnyFragment]], all_files: List[str]):
+        """Wyświetla podsumowanie wyników przetwarzania folderu"""
+        logger.section("PODSUMOWANIE PRZETWARZANIA FOLDERU")
+
+        total_fragments = sum(len(fragments) for fragments in results.values())
+        successful_files = len(results)
+        failed_files = len(all_files) - successful_files
+
+        logger.keyvalue("Przetworzone pliki", str(successful_files), Colors.GREEN)
+        logger.keyvalue("Nieudane pliki", str(failed_files), Colors.RED if failed_files > 0 else Colors.GREEN)
+        logger.keyvalue("Łączna liczba fragmentów", str(total_fragments), Colors.BLUE)
+
+        if total_fragments > 0:
+            all_fragments = []
+            for fragments in results.values():
+                all_fragments.extend(fragments)
+
+            avg_confidence = sum(f.confidence_score for f in all_fragments) / len(all_fragments)
+            logger.keyvalue("Średnia pewność", f"{avg_confidence:.3f}", Colors.YELLOW)
+            logger.keyvalue("Najlepsza pewność", f"{max(f.confidence_score for f in all_fragments):.3f}", Colors.GREEN)
+
+        # Ranking plików
+        if results:
+            self.logger.info("\nRanking plików według liczby fragmentów:")
+            sorted_files = sorted(results.items(), key=lambda x: len(x[1]), reverse=True)
+
+            for i, (file_name, fragments) in enumerate(sorted_files[:10], 1):
+                if fragments:
+                    avg_conf = sum(f.confidence_score for f in fragments) / len(fragments)
+                    logger.keyvalue(f"  {i}. {file_name}",
+                                    f"{len(fragments)} fragmentów (śr. pewność: {avg_conf:.2f})",
+                                    Colors.CYAN)
+
+    def get_all_fragments_sorted(self, results: Dict[str, List[FunnyFragment]]) -> List[FunnyFragment]:
+        """
+        Zwraca wszystkie fragmenty z wszystkich plików posortowane według pewności
+
+        Args:
+            results: Wyniki z process_pdf_folder
+
+        Returns:
+            Posortowana lista wszystkich fragmentów
+        """
+        all_fragments = []
+        for fragments in results.values():
+            all_fragments.extend(fragments)
+
+        all_fragments.sort(key=lambda x: x.confidence_score, reverse=True)
+        return all_fragments
+
+    def process_pdf(self, pdf_path: str, min_confidence: float = 0.3,
+                    max_fragments: int = 50) -> List[FunnyFragment]:
+        """
+        Główna funkcja przetwarzająca PDF lub folder z PDFami
+
+        Args:
+            pdf_path: Ścieżka do pliku PDF lub folderu z PDFami
+            min_confidence: Minimalny próg pewności (0.1-0.95)
+            max_fragments: Maksymalna liczba zwracanych fragmentów
+
+        Returns:
+            Lista znalezionych fragmentów
+        """
+        path = Path(pdf_path)
+
+        # Sprawdzamy czy to folder czy plik
+        if path.is_dir():
+            self.logger.info(f"Wykryto folder - przetwarzanie wszystkich plików PDF w {pdf_path}")
+            results = self.process_pdf_folder(pdf_path, min_confidence, max_fragments, max_fragments)
+            return self.get_all_fragments_sorted(results)
+
+        elif path.is_file() and path.suffix.lower() == '.pdf':
+            self.logger.info(f"Wykryto plik PDF - przetwarzanie {pdf_path}")
+            return self.process_single_pdf(pdf_path, min_confidence, max_fragments)
+
         else:
-            suggestions.append("- Nie znaleziono słów kluczowych w tekście")
-            suggestions.append("- Sprawdź czy plik zawiera właściwy transkrypt")
-            self.logger.warning("\n".join(suggestions))
-
-    def _print_results_summary(self, all_fragments: List[FunnyFragment],
-                               returned_fragments: List[FunnyFragment],
-                               min_confidence: float):
-        """Wyświetla kolorowe podsumowanie wyników"""
-        if not all_fragments:
-            return
-
-        logger.section("PODSUMOWANIE WYNIKÓW")
-
-        avg_confidence = sum(f.confidence_score for f in all_fragments) / len(all_fragments)
-
-        logger.keyvalue("Znalezione fragmenty", str(len(all_fragments)), Colors.GREEN)
-        logger.keyvalue("Zwracane fragmenty", str(len(returned_fragments)), Colors.BLUE)
-        logger.keyvalue("Średnia pewność", f"{avg_confidence:.3f}", Colors.YELLOW)
-        logger.keyvalue("Najlepsza pewność", f"{all_fragments[0].confidence_score:.3f}", Colors.GREEN)
-
-        if len(all_fragments) > 1:
-            logger.keyvalue("Najgorsza pewność", f"{all_fragments[-1].confidence_score:.3f}", Colors.RED)
-
-        # Analiza jakości z kolorowym wykresem
-        high_quality = len([f for f in all_fragments if f.confidence_score >= 0.7])
-        medium_quality = len([f for f in all_fragments if 0.4 <= f.confidence_score < 0.7])
-        low_quality = len([f for f in all_fragments if f.confidence_score < 0.4])
-
-        self.logger.info("Rozkład jakości fragmentów:")
-        logger.keyvalue("  Wysoka jakość (≥0.7)", str(high_quality), Colors.GREEN)
-        logger.keyvalue("  Średnia jakość (0.4-0.7)", str(medium_quality), Colors.YELLOW)
-        logger.keyvalue("  Niska jakość (<0.4)", str(low_quality), Colors.RED)
-
-    def _print_processing_stats(self):
-        """Wyświetla statystyki przetwarzania"""
-        self.logger.debug("Statystyki przetwarzania:")
-        self.logger.debug(f"  Znalezione słowa kluczowe: {self.stats['found_keywords']}")
-        self.logger.debug(f"  Utworzone fragmenty: {self.stats['created_fragments']}")
-        self.logger.debug(f"  Pominięte duplikaty: {self.stats['skipped_duplicates']}")
-        self.logger.debug(f"  Pominięte (niska pewność): {self.stats['skipped_low_confidence']}")
+            raise ValueError(f"Ścieżka {pdf_path} nie jest ani plikiem PDF ani folderem")
 
     def get_processing_stats(self) -> dict:
         """Zwraca statystyki ostatniego przetwarzania"""

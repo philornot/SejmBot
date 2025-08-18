@@ -91,11 +91,12 @@ class FragmentAnalyzer:
                 pattern = self.keyword_patterns[keyword]
                 if pattern.search(fragment_text):
                     verified_keywords.append(keyword)
-                    if self.debug:
-                        self.logger.debug(f"Zweryfikowano słowo '{keyword}' w fragmencie")
+                    # Odkomentuj, jeśli chcesz spamować logami:
+                    # if self.debug:
+                    #     self.logger.debug(f"Zweryfikowano słowo '{keyword}' w fragmencie")
                 else:
                     if self.debug:
-                        self.logger.debug(f"UWAGA! Słowo '{keyword}' nie zostało zweryfikowane!")
+                        self.logger.warning(f"UWAGA! Słowo '{keyword}' nie zostało zweryfikowane!")
             else:
                 # Fallback dla starych wywołań
                 if keyword in fragment_lower:
@@ -154,10 +155,11 @@ class FragmentAnalyzer:
         # Ograniczamy do zakresu 0.1-0.95
         confidence = max(0.1, min(0.95, final_score))
 
-        if self.debug:
-            self.logger.debug(f"Pewność - base: {base_score:.2f}, variety: +{variety_bonus:.2f}, "
-                  f"exclude: -{exclude_penalty:.2f}, length_mod: {length_modifier:.2f}, "
-                  f"final: {confidence:.2f}")
+        # Odkomentuj jeśli chcesz spamować logami:
+        # if self.debug:
+        #     self.logger.debug(f"Pewność - base: {base_score:.2f}, variety: +{variety_bonus:.2f}, "
+        #           f"exclude: -{exclude_penalty:.2f}, length_mod: {length_modifier:.2f}, "
+        #           f"final: {confidence:.2f}")
 
         return confidence
 
