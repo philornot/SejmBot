@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 
 from SejmBotDetektor.detectors.fragment_detector import FragmentDetector
+from SejmBotDetektor.generate_output.output_manager import OutputManager
 from SejmBotDetektor.logging.logger import logger, Colors, LogLevel
-from SejmBotDetektor.utils.output_manager import OutputManager
 
 
 def ensure_output_folder() -> str:
@@ -37,7 +37,7 @@ def main():
     max_total_fragments = 100  # całkowity limit fragmentów
     context_before = 50
     context_after = 100
-    debug_mode = False
+    debug_mode = True
 
     # Ustawiamy poziom logowania
     if debug_mode:
@@ -92,7 +92,7 @@ def main():
             debug=debug_mode
         )
 
-        output_manager = OutputManager(debug=debug_mode)
+        output_manager = OutputManager(debug=debug_mode, output_folder=output_folder)
         logger.success("Komponenty zainicjalizowane")
 
         # Przetwarzanie
@@ -110,8 +110,19 @@ def main():
                 _print_suggestions()
                 return
 
+            # Wyświetlenie wyników w konsoli
+            output_manager.print_folder_results(results, max_files=5)
+
             # Pobieramy wszystkie fragmenty posortowane według pewności
             fragments = detector.get_all_fragments_sorted(results)
+
+            # Eksport do wszystkich formatów
+            logger.section("ZAPIS WYNIKÓW")
+
+            if output_manager.export_folder_results(results, "folder_results"):
+                logger.success("Wszystkie eksporty zakończone pomyślnie")
+            else:
+                logger.warning("Niektóre eksporty mogły się nie powieść")
 
         else:
             # Przetwarzanie pojedynczego pliku
@@ -121,79 +132,30 @@ def main():
                 max_fragments=max_fragments_per_file
             )
 
-        if not fragments:
-            logger.warning("Nie znaleziono fragmentów spełniających kryteria")
-            _print_suggestions()
-            return
+            if not fragments:
+                logger.warning("Nie znaleziono fragmentów spełniających kryteria")
+                _print_suggestions()
+                return
 
-        # Wyświetlenie najlepszych fragmentów
-        logger.section("NAJLEPSZE FRAGMENTY")
-        for i, fragment in enumerate(fragments[:5], 1):
-            confidence_color = Colors.GREEN if fragment.confidence_score >= 0.7 else \
-                Colors.YELLOW if fragment.confidence_score >= 0.4 else Colors.RED
+            # Wyświetlenie wyników w konsoli
+            output_manager.print_results(fragments, max_fragments=5)
 
-            logger.info(f"Fragment {i}:")
-            logger.keyvalue("  Mówca", fragment.speaker, Colors.CYAN)
-            logger.keyvalue("  Pewność", f"{fragment.confidence_score:.3f}", confidence_color)
-            logger.keyvalue("  Słowa kluczowe", fragment.get_keywords_as_string(), Colors.MAGENTA)
+            # Eksport do wszystkich formatów
+            logger.section("ZAPIS WYNIKÓW")
 
-            # Wyświetlamy info o pliku źródłowym jeśli dostępne
-            if "| Plik:" in fragment.meeting_info:
-                meeting_part, file_part = fragment.meeting_info.split("| Plik:")
-                logger.keyvalue("  Plik źródłowy", file_part.strip(), Colors.BLUE)
-                logger.keyvalue("  Posiedzenie", meeting_part.strip(), Colors.GRAY)
+            if output_manager.export_fragments(fragments, "funny_fragments"):
+                logger.success("Wszystkie eksporty zakończone pomyślnie")
             else:
-                logger.keyvalue("  Posiedzenie", fragment.meeting_info, Colors.GRAY)
+                logger.warning("Niektóre eksporty mogły się nie powieść")
 
-            logger.keyvalue("  Podgląd", fragment.get_short_preview(100), Colors.WHITE)
-            print()
+        # Wyświetl statystyki fragmentów
+        if fragments:
+            output_manager.print_summary_stats(fragments)
 
-        # Zapis plików
-        logger.section("ZAPIS WYNIKÓW")
+        # Podsumowanie eksportu
+        output_manager.print_export_summary()
 
-        # Przygotowujemy ścieżki do plików wyjściowych
-        def get_output_path(filename: str) -> str:
-            return os.path.join(output_folder, filename) if output_folder else filename
-
-        json_filename = get_output_path("funny_fragments.json")
-        if output_manager.save_fragments_to_json(fragments, json_filename):
-            logger.success(f"Zapisano do {json_filename}")
-        else:
-            logger.error(f"Błąd zapisu do {json_filename}")
-
-        csv_filename = get_output_path("funny_fragments.csv")
-        if output_manager.export_fragments_to_csv(fragments, csv_filename):
-            logger.success(f"Eksport do {csv_filename}")
-        else:
-            logger.error(f"Błąd eksportu do {csv_filename}")
-
-        # Raport HTML
-        html_filename = get_output_path("funny_fragments_report.html")
-        if path.is_dir() and len(results) > 1:
-            if output_manager.generate_folder_html_report(results, html_filename):
-                logger.success(f"Wygenerowano raport HTML: {html_filename}")
-        else:
-            if output_manager.generate_html_report(fragments, html_filename):
-                logger.success(f"Wygenerowano raport HTML: {html_filename}")
-
-        # Dodatkowy zapis z podziałem na pliki (jeśli przetwarzaliśmy folder)
-        if path.is_dir() and len(results) > 1:
-            logger.info("Zapisywanie wyników z podziałem na pliki źródłowe...")
-
-            for file_name, file_fragments in results.items():
-                if file_fragments:
-                    clean_name = os.path.splitext(file_name)[0]  # Usuwa rozszerzenie .pdf
-                    file_json = get_output_path(f"fragments_{clean_name}.json")
-
-                    if output_manager.save_fragments_to_json(file_fragments, file_json):
-                        logger.info(f"  Zapisano {len(file_fragments)} fragmentów z {file_name} do {file_json}")
-
-            # Zapisujemy też strukturę folderu
-            folder_json = get_output_path("folder_results_structured.json")
-            if output_manager.save_folder_results_to_json(results, folder_json):
-                logger.success(f"Zapisano strukturę wyników folderu do {folder_json}")
-
-        # Statystyki końcowe
+        # Statystyki końcowe wydajności (tylko w trybie debug)
         if debug_mode:
             logger.section("STATYSTYKI WYDAJNOŚCI")
             stats = detector.get_processing_stats()
@@ -257,7 +219,7 @@ def run_example_with_folder():
         debug=False
     )
 
-    output_manager = OutputManager(debug=False)
+    output_manager = OutputManager(debug=False, output_folder=output_folder)
 
     try:
         # Przetwarzanie całego folderu
@@ -280,11 +242,12 @@ def run_example_with_folder():
                 best_fragment = max(fragments, key=lambda f: f.confidence_score)
                 print(f"   Najlepszy: {best_fragment.get_short_preview(80)}")
 
-            # Zapisujemy wszystkie fragmenty razem
-            all_fragments = detector.get_all_fragments_sorted(results)
-            output_path = os.path.join(output_folder, "folder_results.json") if output_folder else "folder_results.json"
-            output_manager.save_fragments_to_json(all_fragments, output_path)
-            print(f"\nZapisano {len(all_fragments)} fragmentów do {output_path}")
+            # Eksportujemy wyniki
+            if output_manager.export_folder_results(results, "example_folder_results"):
+                print(f"\nWyniki wyeksportowane pomyślnie!")
+
+            # Wyświetlamy podsumowanie
+            output_manager.print_export_summary()
 
     except Exception as e:
         print(f"Błąd w przykładzie: {e}")
@@ -299,9 +262,9 @@ def interactive_mode():
     output_folder = ensure_output_folder()
 
     # Pobieranie parametrów od użytkownika
-    pdf_path = input("Podaj ścieżkę do pliku PDF lub folderu (Enter = transkrypty_sejmu): ").strip()
+    pdf_path = input("Podaj ścieżkę do pliku PDF lub folderu (Enter = transkrypty): ").strip()
     if not pdf_path:
-        pdf_path = "transkrypty_sejmu"
+        pdf_path = "transkrypty"
 
     try:
         min_conf_input = input("Minimalna pewność (Enter = 0.3): ").strip()
@@ -331,28 +294,34 @@ def interactive_mode():
 
     # Inicjalizacja i uruchomienie
     detector = FragmentDetector(debug=debug_mode)
-    output_manager = OutputManager(debug=debug_mode)
+    output_manager = OutputManager(debug=debug_mode, output_folder=output_folder)
 
     try:
         if path.is_dir():
             results = detector.process_pdf_folder(
                 pdf_path, min_confidence, max_per_file, max_fragments
             )
-            fragments = detector.get_all_fragments_sorted(results)
+            if results:
+                output_manager.print_folder_results(results)
+                fragments = detector.get_all_fragments_sorted(results)
+            else:
+                fragments = []
         else:
             fragments = detector.process_pdf(pdf_path, min_confidence, max_fragments)
+            if fragments:
+                output_manager.print_results(fragments)
 
         if fragments:
-            output_manager.print_fragments(fragments)
-
             save_input = input("\nZapisać wyniki do pliku? (t/n): ").strip().lower()
             if save_input in ['t', 'tak', 'true', 'yes']:
-                filename = input("Nazwa pliku (Enter = funny_fragments.json): ").strip()
-                if not filename:
-                    filename = "funny_fragments.json"
+                if path.is_dir() and results:
+                    if output_manager.export_folder_results(results, "interactive_results"):
+                        print("Wyniki z folderu zostały zapisane!")
+                else:
+                    if output_manager.export_fragments(fragments, "interactive_fragments"):
+                        print("Fragmenty zostały zapisane!")
 
-                output_path = os.path.join(output_folder, filename) if output_folder else filename
-                output_manager.save_fragments_to_json(fragments, output_path)
+                output_manager.print_export_summary()
 
     except Exception as e:
         print(f"Błąd: {e}")

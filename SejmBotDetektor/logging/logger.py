@@ -201,17 +201,24 @@ class Logger:
         key_colored = f"{Colors.BOLD}{key_color}{key}{Colors.RESET}"
         print(f"{key_colored}: {value}")
 
-    def list_item(self, item: str, level: int = 0, bullet: str = "-"):
-        """Wyświetla element listy z wcięciem"""
+    def list_item(self, item: str, level: int = 0, bullet: str = "-", color: str = None):
+        """Wyświetla element listy ze wcięciem"""
         indent = "  " * level
 
         if not self.enable_colors:
             print(f"{indent}{bullet} {item}")
             return
 
-        bullet_color = Colors.get_list_bullet_color()
-        bullet_colored = f"{bullet_color}{bullet}{Colors.RESET}"
-        print(f"{indent}{bullet_colored} {item}")
+        # Użyj podanego koloru lub domyślnego koloru bullet
+        if color:
+            bullet_colored = f"{color}{bullet}{Colors.RESET}"
+            item_colored = f"{color}{item}{Colors.RESET}"
+        else:
+            bullet_color = Colors.get_list_bullet_color()
+            bullet_colored = f"{bullet_color}{bullet}{Colors.RESET}"
+            item_colored = item
+
+        print(f"{indent}{bullet_colored} {item_colored}")
 
     def palette_demo(self):
         """Demonstracja aktualnej palety kolorów"""
@@ -256,7 +263,7 @@ class Logger:
 
 
 class ModuleLogger:
-    """Logger dla konkretnego modułu"""
+    """Logger dla konkretnego modułu - pełny proxy do parent logger"""
 
     def __init__(self, module_name: str, parent_logger: Logger = None):
         self.module_name = module_name
@@ -286,11 +293,77 @@ class ModuleLogger:
         if self.parent:
             self.parent.critical(message, self.module_name)
 
+    # DODANE BRAKUJĄCE METODY:
+    def header(self, message: str):
+        """Wyświetla nagłówek sekcji"""
+        if self.parent:
+            self.parent.header(message)
+
+    def section(self, message: str):
+        """Wyświetla nagłówek podsekcji"""
+        if self.parent:
+            self.parent.section(message)
+
+    def progress(self, current: int, total: int, description: str = ""):
+        """Wyświetla pasek postępu"""
+        if self.parent:
+            self.parent.progress(current, total, description)
+
+    def table_header(self, headers: list):
+        """Wyświetla nagłówek tabeli"""
+        if self.parent:
+            self.parent.table_header(headers)
+
+    def table_row(self, values: list, highlight_first: bool = False):
+        """Wyświetla wiersz tabeli"""
+        if self.parent:
+            self.parent.table_row(values, highlight_first)
+
+    def keyvalue(self, key: str, value: str, key_color: str = None):
+        """Wyświetla parę klucz-wartość"""
+        if self.parent:
+            self.parent.keyvalue(key, value, key_color)
+
+    def list_item(self, item: str, level: int = 0, bullet: str = "-", color: str = None):
+        """Wyświetla element listy z wcięciem"""
+        if self.parent:
+            self.parent.list_item(item, level, bullet, color)
+
+    def palette_demo(self):
+        """Demonstracja aktualnej palety kolorów"""
+        if self.parent:
+            self.parent.palette_demo()
+
+    # Metody zarządzania paletami i poziomami
+    def set_palette(self, palette_name: str):
+        """Ustawia paletę kolorów"""
+        if self.parent:
+            return self.parent.set_palette(palette_name)
+        return False
+
+    def get_available_palettes(self):
+        """Zwraca dostępne palety kolorów"""
+        if self.parent:
+            return self.parent.get_available_palettes()
+        return []
+
+    def get_current_palette(self):
+        """Zwraca nazwę aktualnej palety"""
+        if self.parent:
+            return self.parent.get_current_palette()
+        return "unknown"
+
+    def set_level(self, level: LogLevel):
+        """Ustawia minimalny poziom logowania"""
+        if self.parent:
+            self.parent.set_level(level)
+
 
 # Globalny logger dla całej aplikacji
 logger = Logger("SejmBot", enable_colors=True, palette="default")
 
-# żeby sprawdzić dostępne palety, zobacz `PALETTES` w SejmBotDetektor/utils/colors.py
+
+# żeby sprawdzić dostępne palety, zobacz `PALETTES` w SejmBotDetektor/generate_output/colors.py
 # "default"
 # "high_contrast"
 # "minimal"
