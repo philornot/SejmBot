@@ -3,8 +3,8 @@ Główna klasa Logger dla SejmBot Detektora
 """
 import sys
 
-from SejmBotDetektor.utils.colors import Colors
-from SejmBotDetektor.utils.log_levels import LogLevel
+from SejmBotDetektor.logging.colors import Colors
+from SejmBotDetektor.logging.log_levels import LogLevel
 
 
 class Logger:

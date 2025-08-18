@@ -5,7 +5,7 @@ import re
 from typing import List, Tuple
 
 from SejmBotDetektor.config.keywords import KeywordsConfig
-from SejmBotDetektor.utils.logger import get_module_logger
+from SejmBotDetektor.logging.logger import get_module_logger
 
 
 class FragmentAnalyzer:

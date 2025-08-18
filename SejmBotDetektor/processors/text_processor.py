@@ -5,7 +5,7 @@ import re
 from typing import List
 
 from SejmBotDetektor.config.keywords import SPEAKER_PATTERNS, MEETING_INFO_PATTERNS
-from SejmBotDetektor.utils.logger import get_module_logger
+from SejmBotDetektor.logging.logger import get_module_logger
 
 
 class TextProcessor:

@@ -5,7 +5,7 @@ import json
 from typing import List, Dict
 
 from SejmBotDetektor.models.funny_fragment import FunnyFragment
-from SejmBotDetektor.utils.logger import get_module_logger
+from SejmBotDetektor.logging.logger import get_module_logger
 
 
 class OutputManager:
@@ -229,7 +229,7 @@ class OutputManager:
         # Nagłówek
         html += f"""
         <div class="header">
-            <h1>️ Detektor Śmiesznych Fragmentów - Wiele Plików</h1>
+            <h1>️Detektor śmisznych fragmentów</h1>
             <p>Raport wygenerowany automatycznie • {len(results)} plików • {total_fragments} fragmentów</p>
         </div>
         """
@@ -237,7 +237,7 @@ class OutputManager:
         # Podsumowanie plików
         html += """
         <div class="file-summary">
-            <h2> Podsumowanie plików</h2>
+            <h2>Podsumowanie plików</h2>
         """
 
         sorted_files = sorted(results.items(), key=lambda x: len(x[1]), reverse=True)

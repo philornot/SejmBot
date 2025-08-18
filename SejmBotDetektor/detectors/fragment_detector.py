@@ -9,7 +9,7 @@ from SejmBotDetektor.analyzers.fragment_analyzer import FragmentAnalyzer
 from SejmBotDetektor.models.funny_fragment import FunnyFragment
 from SejmBotDetektor.processors.pdf_processor import PDFProcessor
 from SejmBotDetektor.processors.text_processor import TextProcessor
-from SejmBotDetektor.utils.logger import get_module_logger, logger, Colors
+from SejmBotDetektor.logging.logger import get_module_logger, logger, Colors
 
 
 class FragmentDetector:

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from SejmBotDetektor.detectors.fragment_detector import FragmentDetector
-from SejmBotDetektor.utils.logger import logger, Colors, LogLevel
+from SejmBotDetektor.logging.logger import logger, Colors, LogLevel
 from SejmBotDetektor.utils.output_manager import OutputManager
 
 
@@ -35,9 +35,9 @@ def main():
     min_confidence = 0.3
     max_fragments_per_file = 20
     max_total_fragments = 100  # całkowity limit fragmentów
-    context_before = 25
-    context_after = 25
-    debug_mode = True
+    context_before = 50
+    context_after = 100
+    debug_mode = False
 
     # Ustawiamy poziom logowania
     if debug_mode:
