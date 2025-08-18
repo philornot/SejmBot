@@ -113,10 +113,6 @@ class FragmentDetector:
         # Wyciągamy informacje o posiedzeniu raz na początku
         meeting_info = self.text_processor.extract_meeting_info(text)
 
-        # Dodajemy informację o pliku źródłowym do meeting_info
-        if source_file:
-            meeting_info += f" | Plik: {source_file}"
-
         # Grupujemy blisko siebie występujące słowa kluczowe
         grouped_keywords = self._group_nearby_keywords(keyword_positions, cleaned_text)
 

@@ -12,22 +12,17 @@ class TextProcessor:
     """Klasa do przetwarzania i analizy tekstu"""
 
     def __init__(self, debug: bool = False):
-        self.debug = debug
         self.logger = get_module_logger("TextProcessor")
+        self.debug = debug
+        self._speaker_cache = {}
         self.speaker_patterns = SPEAKER_PATTERNS
         self.meeting_patterns = MEETING_INFO_PATTERNS
 
     def clean_text(self, text: str) -> str:
         """
-        Czyści tekst z niepotrzebnych elementów
-
-        Args:
-            text: Surowy tekst z PDF
-
-        Returns:
-            Oczyszczony tekst
+        Czyści tekst z niepotrzebnych elementów i łączy słowa oddzielone myślnikami
         """
-        # Usuwa spis treści (zwykle pierwsza strona)
+        # 1. Zachowujemy istniejącą logikę usuwania spisu treści
         lines = text.split('\n')
         cleaned_lines = []
         skip_toc = False
@@ -40,7 +35,7 @@ class TextProcessor:
                 skip_toc = True
                 continue
 
-            # Kończymy pomijanie gdy trafimy na faktyczną wypowiedź
+            # Kończymy pomijanie, gdy trafimy na faktyczną wypowiedź
             if skip_toc and any(pattern_part in line for pattern_part in ['Poseł ', 'Minister ', 'Marszałek ']):
                 skip_toc = False
 
@@ -49,14 +44,79 @@ class TextProcessor:
 
         cleaned_text = ' '.join(cleaned_lines)
 
+        # 2. NOWA FUNKCJONALNOŚĆ: Łączenie słów rozdzielonych myślnikami
+        cleaned_text = self._fix_hyphenated_words(cleaned_text)
+
+        # 3. Dodatkowe czyszczenie formatowania
+        cleaned_text = re.sub(r'\s+', ' ', cleaned_text)  # Wielokrotne spacje -> jedna
+        cleaned_text = cleaned_text.strip()
+
         if self.debug:
             self.logger.debug(f"Oczyszczono tekst z {len(text)} do {len(cleaned_text)} znaków")
 
         return cleaned_text
 
+    @staticmethod
+    def _fix_hyphenated_words(text: str) -> str:
+        """
+        Funkcja pomocnicza: łączy słowa rozdzielone myślnikami
+
+        Args:
+            text: Tekst do przetworzenia
+
+        Returns:
+            Tekst z połączonymi słowami (np. "par-lament" -> "parlament")
+        """
+        # Lista wyjątków — słowa, które powinny zachować myślniki
+        hyphen_exceptions = ['ex-minister', 'wice-premier', 'post-komunist', 'anty-europejsk',
+                             'pro-unijn', 'pseudo-', 'multi-', 'inter-', 'super-'
+                             ]
+
+        def should_preserve_hyphen(before_word: str, after_word: str) -> bool:
+            """Sprawdza, czy myślnik powinien zostać zachowany"""
+            full_phrase = f"{before_word}-{after_word}".lower()
+            return any(exception in full_phrase for exception in hyphen_exceptions)
+
+        def replace_hyphen_match(match):
+            before_word = match.group(1)
+            after_word = match.group(2)
+
+            # Zachowujemy myślnik w nazwach własnych i wyjątkach
+            if should_preserve_hyphen(before_word, after_word):
+                return f"{before_word}-{after_word}"
+
+            # Łączymy słowa, jeśli to wygląda na przerwany wyraz:
+            # - drugie słowo zaczyna się małą literą
+            # - pierwsze słowo jest krótkie (prawdopodobnie sylaba)
+            # - drugie słowo to typowa końcówka
+            typical_endings = ['lament', 'ment', 'owy', 'ny', 'ski', 'cki', 'nej', 'ty', 'nia', 'arz', 'yczny']
+
+            if (after_word and
+                    (after_word[0].islower() or
+                     len(before_word) <= 4 or
+                     any(after_word.lower().endswith(ending) for ending in typical_endings))):
+                return f"{before_word}{after_word}"
+            else:
+                # Zachowujemy myślnik, ale usuwamy zbędne spacje
+                return f"{before_word}-{after_word}"
+
+        # Główne wzorce do łączenia słów z myślnikami
+        patterns = [
+            r'(\w+)\s*-\s*\n\s*(\w+)',  # "słowo-\nslowo"
+            r'(\w+)\s*-\s+(\w+)',  # "słowo- słowo"
+            r'(\w+)\s+-\s*(\w+)',  # "słowo -słowo"
+            r'(\w{2,})-(\w{2,})'  # "słowo-słowo" (bez spacji)
+        ]
+
+        result = text
+        for pattern in patterns:
+            result = re.sub(pattern, replace_hyphen_match, result)
+
+        return result
+
     def find_speaker(self, text: str, position: int) -> str:
         """
-        Znajduje mówcę - ulepszona wersja z cache
+        Znajduje mówcę
 
         Args:
             text: Tekst transkryptu
@@ -75,7 +135,7 @@ class TextProcessor:
             if abs(cached_pos - position) < 500:  # Cache hit
                 return cached_speaker
 
-        # Szukamy w fragmencie tekstu przed pozycją
+        # Szukamy we fragmencie tekstu przed pozycją
         search_start = max(0, position - 2000)  # Ograniczamy obszar wyszukiwania
         text_before = text[search_start:position + 100]
 
@@ -98,31 +158,102 @@ class TextProcessor:
 
     def extract_meeting_info(self, text: str) -> str:
         """
-        Wyciąga informacje o posiedzeniu z tekstu
+        Wyciąga informacje o posiedzeniu z tekstu, generując czytelny format bez znaków nowej linii (\n)
 
         Args:
             text: Tekst transkryptu
 
         Returns:
-            Informacje o posiedzeniu
+            Sformatowane informacje o posiedzeniu (np. "Sejm RP, Kadencja X, 39. posiedzenie, 22 lipca 2025")
         """
-        # Sprawdzamy pierwsze 1000 znaków gdzie zwykle są metadane
-        header_text = text[:1000]
+        if not text:
+            return "Posiedzenie Sejmu"
 
+        # Sprawdzamy pierwsze 1500 znaków gdzie zwykle są metadane
+        header_text = text[:1500]
+
+        meeting_info = {
+            'sejm': None,
+            'kadencja': None,
+            'posiedzenie': None,
+            'data': None
+        }
+
+        # Nowe, bardziej precyzyjne wzorce
+        patterns = {
+            'sejm': r'sejm\s+rzeczypospolitej\s+polskiej',
+            'kadencja': r'kadencja\s+([IVX]+)',
+            'posiedzenie': r'(\d+)\.\s*posiedzeni[a-z]*',
+            'data': r'w\s+dniu\s+(\d+\s+[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]+\s+\d{4})'
+        }
+
+        # Sprawdzamy też stare wzorce dla kompatybilności
         for pattern in self.meeting_patterns:
             match = re.search(pattern, header_text, re.IGNORECASE | re.DOTALL)
             if match:
-                meeting_info = match.group(1).strip()
+                # Parsujemy znaleziony tekst linia po linii
+                found_text = match.group(1).strip()
+                lines = found_text.split('\n')
 
-                if self.debug:
-                    self.logger.debug(f"Znaleziono info o posiedzeniu: {meeting_info[:50]}...")
+                for line in lines:
+                    line_clean = line.strip().lower()
+                    if not line_clean:
+                        continue
 
-                return meeting_info
+                    # Sprawdzamy każdy wzorzec w każdej linii
+                    for key, pattern_regex in patterns.items():
+                        if meeting_info[key] is None:
+                            submatch = re.search(pattern_regex, line_clean, re.IGNORECASE)
+                            if submatch:
+                                if key == 'sejm':
+                                    meeting_info[key] = 'Sejm RP'
+                                elif key == 'kadencja':
+                                    meeting_info[key] = f"Kadencja {submatch.group(1).upper()}"
+                                elif key == 'posiedzenie':
+                                    meeting_info[key] = f"{submatch.group(1)}. posiedzenie"
+                                elif key == 'data':
+                                    # Czyścimy datę
+                                    date_clean = re.sub(r'\s+', ' ', submatch.group(1)).strip()
+                                    meeting_info[key] = date_clean
+                break
 
-        if self.debug:
-            self.logger.debug("Nie znaleziono informacji o posiedzeniu")
+        # Jeśli nie znaleziono przez stare wzorce, próbujemy bezpośrednio w header_text
+        if all(v is None for v in meeting_info.values()):
+            for key, pattern_regex in patterns.items():
+                if meeting_info[key] is None:
+                    match = re.search(pattern_regex, header_text, re.IGNORECASE)
+                    if match:
+                        if key == 'sejm':
+                            meeting_info[key] = 'Sejm RP'
+                        elif key == 'kadencja':
+                            meeting_info[key] = f"Kadencja {match.group(1).upper()}"
+                        elif key == 'posiedzenie':
+                            meeting_info[key] = f"{match.group(1)}. posiedzenie"
+                        elif key == 'data':
+                            date_clean = re.sub(r'\s+', ' ', match.group(1)).strip()
+                            meeting_info[key] = date_clean
 
-        return "Informacje o posiedzeniu nie zostały znalezione"
+        # Budujemy czytelny ciąg informacji (oddzielony przecinkami, nie \n)
+        result_parts = []
+
+        if meeting_info['sejm']:
+            result_parts.append(meeting_info['sejm'])
+        if meeting_info['kadencja']:
+            result_parts.append(meeting_info['kadencja'])
+        if meeting_info['posiedzenie']:
+            result_parts.append(meeting_info['posiedzenie'])
+        if meeting_info['data']:
+            result_parts.append(meeting_info['data'])
+
+        if result_parts:
+            result = ', '.join(result_parts)
+            if self.debug:
+                self.logger.debug(f"Sformatowano info o posiedzeniu: {result}")
+            return result
+        else:
+            if self.debug:
+                self.logger.debug("Nie znaleziono informacji o posiedzeniu")
+            return "Posiedzenie Sejmu"
 
     def find_text_position(self, full_text: str, fragment_text: str, fallback_word: str) -> int:
         """
@@ -156,7 +287,8 @@ class TextProcessor:
 
         return position
 
-    def extract_context(self, words: List[str], center_index: int,
+    @staticmethod
+    def extract_context(words: List[str], center_index: int,
                         context_before: int, context_after: int) -> str:
         """
         Wyciąga kontekst wokół słowa
