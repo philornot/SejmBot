@@ -237,8 +237,14 @@ class HtmlGenerator:
         """
 
         for i, fragment in enumerate(fragments[:15], 1):
-            conf_class = "high" if fragment.confidence_score >= 0.7 else "medium" if fragment.confidence_score >= 0.4 else "low"
-            html += f'<li><a href="#fragment-{i}">Fragment {i}: {fragment.speaker} (pewność: {fragment.confidence_score:.2f})</a></li>'
+            # Wyświetlanie mówcy w spisie treści
+            speaker_info = fragment.speaker
+            if speaker_info.get('club'):
+                speaker_display = f"{speaker_info['name']} ({speaker_info['club']})"
+            else:
+                speaker_display = f"{speaker_info['name']} (brak klubu)"
+
+            html += f'<li><a href="#fragment-{i}">Fragment {i}: {speaker_display} (pewność: {fragment.confidence_score:.2f})</a></li>'
 
         if len(fragments) > 15:
             html += f"<li><em>... i {len(fragments) - 15} więcej fragmentów</em></li>"
@@ -266,10 +272,17 @@ class HtmlGenerator:
 
             source_file_tag = f'<span class="source-file">{source_file}</span>' if show_source_file else ""
 
+            # Wyświetlanie mówcy
+            speaker_info = fragment.speaker  # To zwraca słownik {"name": str, "club": str|None}
+            if speaker_info.get('club'):
+                speaker_display = f"{speaker_info['name']} ({speaker_info['club']})"
+            else:
+                speaker_display = f"{speaker_info['name']} (brak klubu)"
+
             html += f"""
             <div class="fragment confidence-{conf_class}" id="fragment-{i}">
                 <div class="speaker">
-                    🎤 {fragment.speaker}
+                    🎤 {speaker_display}
                     <span class="confidence conf-{conf_class}">{fragment.confidence_score:.3f}</span>
                     {source_file_tag}
                 </div>

@@ -288,10 +288,9 @@ class FragmentDetector:
         )
 
         # Znajdujemy mówcę
-        speaker_raw = self.text_processor.find_speaker(
+        speaker_raw = self._find_speaker_with_club(
             original_text, original_position if original_position != -1 else 0
         )
-
         # NOWE: Określamy typ humoru
         humor_type = self.fragment_analyzer.determine_humor_type(verified_keywords, fragment_text)
 
@@ -670,3 +669,84 @@ class FragmentDetector:
     def reset_stats(self):
         """Resetuje statystyki przetwarzania"""
         self.stats = {k: 0 for k in self.stats}
+
+    def _find_speaker_with_club(self, original_text: str, position: int) -> str:
+        """
+        Znajduje mówcę z informacją o klubie parlamentarnym
+
+        Args:
+            original_text: Pełny tekst transkryptu
+            position: Pozycja fragmentu w tekście
+
+        Returns:
+            Nazwa mówcy z klubem (jeśli dostępny)
+        """
+        if not original_text or position < 0:
+            return "Nieznany mówca"
+
+        # Szukamy wstecz od pozycji fragmentu
+        search_start = max(0, position - 2000)  # Szukamy w promieniu 2000 znaków
+        text_section = original_text[search_start:position + 500]
+
+        # Wzorce dla mówców z klubami
+        import re
+
+        # Wzorzec 1: "Poseł/Posłanka Imię Nazwisko (Klub):"
+        speaker_patterns = [
+            r'Poseł(?:anka)?\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Marszałek\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Wicemarszałek\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Przewodniczący\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Minister\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Sekretarz\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+
+            # Wzorzec 2: "Imię Nazwisko (Klub):"
+            r'([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+\s+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)\s*\(([^)]+)\)\s*:',
+
+            # Wzorzec 3: Bez tytułu ale z dwukropkiem "Jan Kowalski (PiS):"
+            r'^([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+(?:\s+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż-]+)*)\s*\(([^)]+)\)\s*:',
+        ]
+
+        # Szukamy od końca tekstu (najbliższy mówca)
+        lines = text_section.split('\n')
+        lines.reverse()
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            for pattern in speaker_patterns:
+                match = re.search(pattern, line, re.MULTILINE | re.IGNORECASE)
+                if match:
+                    if len(match.groups()) >= 2:
+                        name = match.group(1).strip()
+                        club = match.group(2).strip()
+
+                        # Czyścimy nazwę z tytułów
+                        name = re.sub(r'^(Poseł|Posłanka|Marszałek|Wicemarszałek|Minister|Przewodniczący|Sekretarz)\s+',
+                                      '', name, flags=re.IGNORECASE)
+                        name = name.strip()
+
+                        if name and club:
+                            return f"{name} ({club})"
+                    else:
+                        # Jeśli tylko jedna grupa - znaczy że to nazwa bez klubu
+                        name = match.group(1).strip()
+                        name = re.sub(r'^(Poseł|Posłanka|Marszałek|Wicemarszałek|Minister|Przewodniczący|Sekretarz)\s+',
+                                      '', name, flags=re.IGNORECASE)
+                        return name.strip()
+
+        # Fallback - użyj oryginalnej metody TextProcessor
+        original_speaker = self.text_processor.find_speaker(original_text, position)
+
+        # Sprawdź czy oryginalny wynik ma już klub
+        if '(' in original_speaker and ')' in original_speaker:
+            return original_speaker
+        else:
+            return f"{original_speaker} (brak klubu)" if original_speaker != "Nieznany mówca" else "Nieznany mówca"
+
+    # W metodzie _process_keyword_group zamień:
+    #
+    # NA:
+    #

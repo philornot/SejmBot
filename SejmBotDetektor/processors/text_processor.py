@@ -116,14 +116,14 @@ class TextProcessor:
 
     def find_speaker(self, text: str, position: int) -> str:
         """
-        Znajduje mówcę
+        Znajduje mówcę wraz z klubem parlamentarnym
 
         Args:
             text: Tekst transkryptu
             position: Pozycja w tekście
 
         Returns:
-            Imię i nazwisko mówcy lub "Nieznany mówca"
+            Imię i nazwisko mówcy z klubem lub "Nieznany mówca"
         """
         if not hasattr(self, '_speaker_cache'):
             self._speaker_cache = {}
@@ -141,15 +141,97 @@ class TextProcessor:
 
         found_speaker = "Nieznany mówca"
 
-        for pattern in self.speaker_patterns:
-            matches = list(re.finditer(pattern, text_before, re.IGNORECASE))
-            if matches:
-                last_match = matches[-1]
-                found_speaker = last_match.group(1).strip()
+        # Szukamy mówców z klubami
+        enhanced_patterns = [
+            # Wzorce z klubami w nawiasach
+            r'Poseł(?:anka)?\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Marszałek\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Wicemarszałek\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Minister\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Przewodniczący\s+([^:()]+)\s*\(([^)]+)\)\s*:',
+            r'Sekretarz\s+([^:()]+)\s*\(([^)]+)\)\s*:',
 
-                if self.debug:
-                    self.logger.debug(f"Znaleziono mówcę '{found_speaker}'")
+            # Wzorce bez tytułów ale z klubem
+            r'([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+\s+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)\s*\(([^)]+)\)\s*:',
+
+            # Fallback - stare wzorce bez klubu (dla kompatybilności)
+            r'Poseł(?:anka)?\s+([^:]+?)\s*:',
+            r'Marszałek\s+([^:]+?)\s*:',
+            r'Wicemarszałek\s+([^:]+?)\s*:',
+            r'Minister\s+([^:]+?)\s*:',
+            r'Przewodniczący\s+([^:]+?)\s*:',
+            r'Sekretarz\s+([^:]+?)\s*:',
+
+            # Wzorzec ogólny - imię nazwisko bez tytułu
+            r'([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+\s+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)\s*:'
+        ]
+
+        # Dzielimy tekst na linie i szukamy od końca (ostatni mówca)
+        lines = text_before.split('\n')
+        lines.reverse()
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            for pattern in enhanced_patterns:
+                match = re.search(pattern, line, re.IGNORECASE)
+                if match:
+                    if len(match.groups()) >= 2:
+                        # Mamy imię i klub
+                        name = match.group(1).strip()
+                        club = match.group(2).strip()
+
+                        # Czyścimy nazwę z tytułów
+                        name = re.sub(r'^(Poseł|Posłanka|Marszałek|Wicemarszałek|Minister|Przewodniczący|Sekretarz)\s+',
+                                      '', name, flags=re.IGNORECASE)
+                        name = name.strip()
+
+                        if name and club:
+                            found_speaker = f"{name} ({club})"
+                            if self.debug:
+                                self.logger.debug(f"Znaleziono mówcę z klubem: '{found_speaker}'")
+                            break
+                    else:
+                        # Mamy tylko imię
+                        name = match.group(1).strip()
+                        name = re.sub(r'^(Poseł|Posłanka|Marszałek|Wicemarszałek|Minister|Przewodniczący|Sekretarz)\s+',
+                                      '', name, flags=re.IGNORECASE)
+                        name = name.strip()
+
+                        if name:
+                            # Sprawdźmy czy w tej samej linii nie ma klubu gdzie indziej
+                            club_match = re.search(r'\(([^)]+)\)', line)
+                            if club_match:
+                                club = club_match.group(1).strip()
+                                found_speaker = f"{name} ({club})"
+                            else:
+                                found_speaker = f"{name} (brak klubu)"
+
+                            if self.debug:
+                                self.logger.debug(f"Znaleziono mówcę: '{found_speaker}'")
+                            break
+
+            if found_speaker != "Nieznany mówca":
                 break
+
+        # Fallback — użyj oryginalnych wzorców z self.speaker_patterns
+        if found_speaker == "Nieznany mówca":
+            for pattern in self.speaker_patterns:
+                matches = list(re.finditer(pattern, text_before, re.IGNORECASE))
+                if matches:
+                    last_match = matches[-1]
+                    name = last_match.group(1).strip()
+
+                    # Czyścimy z tytułów
+                    name = re.sub(r'^(Poseł|Posłanka|Marszałek|Wicemarszałek|Minister|Przewodniczący|Sekretarz)\s+', '',
+                                  name, flags=re.IGNORECASE)
+                    found_speaker = f"{name} (brak klubu)"
+
+                    if self.debug:
+                        self.logger.debug(f"Fallback - znaleziono mówcę: '{found_speaker}'")
+                    break
 
         # Zapisujemy do cache
         self._speaker_cache[cache_key] = (found_speaker, position)
