@@ -1,8 +1,7 @@
 # SejmBot — Detektor śmiesznych momentów z polskiego parlamentu
 
-**SejmBot** to system do automatycznego wykrywania humorystycznych i absurdalnych fragmentów z posiedzeń Sejmu RP.
-Projekt analizuje transkrypty parlamentarne w poszukiwaniu zabawnych wypowiedzi polityków, wykorzystując algorytm oparty
-na słowach kluczowych.
+## Basically:
+SejmBot to docelowo apka mobilna. Bot po każdym posiedzeniu sejmu RP wchodzi na stronę sejmu, pobiera najnowszy transkrypt posiedzenia w pdfie, zamienia go na tekst i ekstraktuje wypowiedzi łącząc je z ich autorami (i ich klubami parlamentarnymi), a następnie szuka w wypowiedziach słów kluczowych jak "żart”, "absurd" i inne (mam listę chyba około 150 słów, każde z odpowiednią wagą) które mogą wskazywać na to, że wypowiedź (jej fragment) jest śmieszny. (Na tym etapie jestem). Następnie na podstawie nagromadzenia tych słów kluczowych w wypowiedziach wybieramy 33 % najlepszych, a następnie je wysłamy do API OpenAI/Claude z zapytaniem: czy to jest śmieszne? Jeśli tak, to w ten sposób wyselekcjonowany śmiesny fragment z linkiem do pełnej wypowiedzi w formie wideo z wideorekordu posiedzenia jest wysłany do bazy danych, skąd jest przesyłany do aplikacji mobilnej. End user dostaje powiadomienie z wygenerowanym przez dane API nagłówkiem śmiesznej wypowiedzi (podsumowaniem jej np.), klika w powiadomienie i jest 10 % szans że się uśmiechnie pod nosem, i jego dzień będzie o 🤏 lepszy dzięki mnie.
 
 ### Cel projektu
 
