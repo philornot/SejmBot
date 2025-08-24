@@ -95,20 +95,20 @@ class ZnajdowaczPoslowInator:
 
     def zamien_nazwisko_imie(self, name: str) -> str:
         """
-        Zamienia kolejność z "Nazwisko Imię" na "Imię Nazwisko"
+        Zamienia kolejność z "Nazwisko Imię(Imiona)" na "Imię(Imiona) Nazwisko"
 
         Args:
-            name (str): Nazwa w formacie "Nazwisko Imię"
+            name (str): Nazwa w formacie "Nazwisko Imię Imię2 ..."
 
         Returns:
-            str: Nazwa w formacie "Imię Nazwisko"
+            str: Nazwa w formacie "Imię Imię2 ... Nazwisko"
         """
         parts = name.split()
         if len(parts) >= 2:
-            # Ostatni element to imię, reszta to nazwisko
-            imie = parts[-1]
-            nazwisko = " ".join(parts[:-1])
-            return f"{imie} {nazwisko}"
+            # Pierwszy element to nazwisko, reszta to imiona
+            nazwisko = parts[0]
+            imiona = " ".join(parts[1:])
+            return f"{imiona} {nazwisko}"
         return name
 
     def wyciagnij_dane_posla(self, li_element) -> Optional[Tuple[str, str, str]]:
