@@ -1,21 +1,22 @@
 """
 Główny moduł do wykrywania śmiesznych fragmentów w transkryptach Sejmu
+POPRAWIONA WERSJA z nowymi wymaganiami
 """
 import os
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
 from SejmBotDetektor.analyzers.fragment_analyzer import FragmentAnalyzer
+from SejmBotDetektor.logging.logger import get_module_logger, logger, Colors
 from SejmBotDetektor.models.funny_fragment import FunnyFragment
 from SejmBotDetektor.processors.pdf_processor import PDFProcessor
 from SejmBotDetektor.processors.text_processor import TextProcessor
-from SejmBotDetektor.logging.logger import get_module_logger, logger, Colors
 
 
 class FragmentDetector:
-    """Główna klasa do wykrywania śmiesznych fragmentów"""
+    """Główna klasa do wykrywania śmiesznych fragmentów - POPRAWIONA WERSJA"""
 
-    def __init__(self, context_before: int = 50, context_after: int = 49, debug: bool = False):
+    def __init__(self, context_before: int = 49, context_after: int = 100, debug: bool = False):
         """
         Inicjalizacja detektora
 
@@ -56,6 +57,7 @@ class FragmentDetector:
             'created_fragments': 0,
             'skipped_duplicates': 0,
             'skipped_low_confidence': 0,
+            'skipped_too_short': 0,
             'processed_files': 0,
             'failed_files': 0
         }
@@ -66,7 +68,7 @@ class FragmentDetector:
     def find_funny_fragments(self, text: str, min_confidence: float = 0.3, source_file: str = None) -> List[
         FunnyFragment]:
         """
-        Znajduje śmieszne fragmenty w tekście - ulepszona wersja
+        Znajduje śmieszne fragmenty w tekście - POPRAWIONA WERSJA
 
         Args:
             text: Tekst do przeanalizowania
@@ -74,7 +76,7 @@ class FragmentDetector:
             source_file: Nazwa pliku źródłowego (dla debugowania)
 
         Returns:
-            Lista znalezionych fragmentów
+            Lista znalezionych fragmentów (bez fragmentów too_short)
         """
         # Walidacja parametrów
         if not text or not text.strip():
@@ -85,12 +87,15 @@ class FragmentDetector:
         if not 0.1 <= min_confidence <= 0.95:
             raise ValueError("min_confidence musi być w zakresie 0.1-0.95")
 
-        # Czyścimy tekst
+        # Czyścimy tekst i filtrujemy markery protokołu
         cleaned_text = self.text_processor.clean_text(text)
         if not cleaned_text:
             if self.debug:
                 self.logger.debug(f"Tekst pusty po czyszczeniu {f'w pliku {source_file}' if source_file else ''}")
             return []
+
+        # NOWE: Filtracja markerów stenogramu
+        cleaned_text = self.fragment_analyzer.filter_protocol_markers(cleaned_text)
 
         # Używamy nowej metody wyszukiwania słów kluczowych
         keyword_positions = self.fragment_analyzer.find_keywords_in_text(cleaned_text)
@@ -112,6 +117,8 @@ class FragmentDetector:
 
         # Wyciągamy informacje o posiedzeniu raz na początku
         meeting_info = self.text_processor.extract_meeting_info(text)
+        if source_file:
+            meeting_info = f"{meeting_info} | Plik: {source_file}"
 
         # Grupujemy blisko siebie występujące słowa kluczowe
         grouped_keywords = self._group_nearby_keywords(keyword_positions, cleaned_text)
@@ -128,12 +135,27 @@ class FragmentDetector:
                 )
 
                 if fragment_result:
+                    # NOWE: Sprawdzamy czy fragment nie jest za krótki
+                    if fragment_result.too_short:
+                        self.stats['skipped_too_short'] += 1
+                        if self.debug:
+                            self.logger.debug(f"Fragment za krótki, pomijam: {len(fragment_result.text.split())} słów")
+                        continue
+
+                    # NOWE: Sprawdzamy duplikaty z fuzzy matching
+                    if self.fragment_analyzer.is_duplicate_fuzzy(fragment_result.text, existing_texts, 0.85):
+                        self.stats['skipped_duplicates'] += 1
+                        if self.debug:
+                            self.logger.debug("Fragment jest duplikatem (fuzzy matching)")
+                        continue
+
                     fragments.append(fragment_result)
                     existing_texts.append(fragment_result.text)
                     self.stats['created_fragments'] += 1
 
                     if self.debug:
-                        self.logger.debug(f"Utworzono fragment #{len(fragments)}")
+                        self.logger.debug(
+                            f"Utworzono fragment #{len(fragments)} (confidence: {fragment_result.confidence_score:.2f})")
 
             except Exception as e:
                 self.logger.error(f"Błąd podczas przetwarzania grupy: {e}")
@@ -147,7 +169,7 @@ class FragmentDetector:
 
         if self.debug:
             self.logger.debug(
-                f"Znaleziono łącznie {len(fragments)} fragmentów {f'w pliku {source_file}' if source_file else ''}")
+                f"Znaleziono łącznie {len(fragments)} fragmentów wysokiej jakości {f'w pliku {source_file}' if source_file else ''}")
 
         return fragments
 
@@ -216,7 +238,7 @@ class FragmentDetector:
                                meeting_info: str, min_confidence: float,
                                existing_texts: List[str]) -> Optional[FunnyFragment]:
         """
-        Przetwarza grupę słów kluczowych w fragment
+        Przetwarza grupę słów kluczowych w fragment - POPRAWIONA WERSJA
 
         Returns:
             FunnyFragment lub None jeśli fragment odrzucony
@@ -233,9 +255,13 @@ class FragmentDetector:
             words, word_position, self.context_before, self.context_after
         )
 
-        if not fragment_text or len(fragment_text.strip()) < 20:
-            if self.debug:
-                self.logger.debug("Fragment za krótki, pomijam")
+        if not fragment_text:
+            return None
+
+        # NOWE: Czyścimy tekst fragmentu
+        fragment_text = self.fragment_analyzer.clean_fragment_text(fragment_text)
+
+        if not fragment_text or len(fragment_text.strip()) < 10:
             return None
 
         # Weryfikujemy słowa kluczowe w fragmencie
@@ -248,10 +274,13 @@ class FragmentDetector:
                 self.logger.debug("Brak zweryfikowanych słów kluczowych")
             return None
 
-        # Obliczamy pewność
-        confidence = self.fragment_analyzer.calculate_confidence(
+        # NOWE: Obliczamy szczegółowy confidence z rozbiciem na składowe
+        confidence_details = self.fragment_analyzer.calculate_confidence_detailed(
             fragment_text, verified_keywords
         )
+
+        # Sprawdzamy czy fragment ma minimalną długość
+        too_short = self.fragment_analyzer.is_fragment_too_short(fragment_text, 15)
 
         # Znajdujemy pozycję w oryginalnym tekście
         original_position = self.text_processor.find_text_position(
@@ -259,40 +288,46 @@ class FragmentDetector:
         )
 
         # Znajdujemy mówcę
-        speaker = self.text_processor.find_speaker(
+        speaker_raw = self.text_processor.find_speaker(
             original_text, original_position if original_position != -1 else 0
+        )
+
+        # NOWE: Określamy typ humoru
+        humor_type = self.fragment_analyzer.determine_humor_type(verified_keywords, fragment_text)
+
+        # NOWE: Wyciągamy kontekst zdaniowy
+        sentence_context = self.fragment_analyzer.extract_sentence_context(
+            original_text, original_position if original_position != -1 else 0, 1, 1
         )
 
         # Sprawdzamy czy fragment powinien być pominięty
         should_skip, skip_reason = self.fragment_analyzer.should_skip_fragment(
-            speaker, confidence, min_confidence, fragment_text
+            speaker_raw, confidence_details['confidence'], min_confidence, fragment_text
         )
 
         if should_skip:
-            # spam:
-            # if self.debug:
-            #     self.logger.debug(f"Pomijam fragment: {skip_reason}")
             if "pewność za niska" in skip_reason.lower():
                 self.stats['skipped_low_confidence'] += 1
             return None
 
-        # Sprawdzamy duplikaty
-        if self.fragment_analyzer.is_duplicate(fragment_text, existing_texts):
-            if self.debug:
-                self.logger.debug("Fragment jest duplikatem")
-            self.stats['skipped_duplicates'] += 1
-            return None
-
-        # Tworzymy fragment
+        # Tworzymy fragment z nowymi polami
         fragment = FunnyFragment(
             text=fragment_text,
-            speaker=speaker,
+            speaker_raw=speaker_raw,
             meeting_info=meeting_info,
             keywords_found=verified_keywords,
             position_in_text=original_position,
-            context_before=self.context_before,
-            context_after=self.context_after,
-            confidence_score=confidence
+            context_before_words=self.context_before,
+            context_after_words=self.context_after,
+            confidence_score=confidence_details['confidence'],
+            # Nowe pola
+            keyword_score=confidence_details['keyword_score'],
+            context_score=confidence_details['context_score'],
+            length_bonus=confidence_details['length_bonus'],
+            humor_type=humor_type,
+            too_short=too_short,
+            context_before=sentence_context['context_before'],
+            context_after=sentence_context['context_after']
         )
 
         return fragment
@@ -365,7 +400,7 @@ class FragmentDetector:
                            max_fragments_per_file: int = 50, max_total_fragments: int = 200) -> Dict[
         str, List[FunnyFragment]]:
         """
-        Przetwarza wszystkie pliki PDF w folderze
+        Przetwarza wszystkie pliki PDF w folderze - POPRAWIONA WERSJA
 
         Args:
             folder_path: Ścieżka do folderu z plikami PDF
@@ -374,7 +409,7 @@ class FragmentDetector:
             max_total_fragments: Maksymalna całkowita liczba fragmentów
 
         Returns:
-            Słownik {nazwa_pliku: lista_fragmentów}
+            Słownik {nazwa_pliku: lista_fragmentów} - tylko fragmenty wysokiej jakości
         """
         # Walidacja parametrów
         if not folder_path or not isinstance(folder_path, str):
@@ -427,7 +462,7 @@ class FragmentDetector:
                 if fragments:
                     results[file_name] = fragments
                     total_fragments += len(fragments)
-                    self.logger.success(f"Znaleziono {len(fragments)} fragmentów w {file_name}")
+                    self.logger.success(f"Znaleziono {len(fragments)} fragmentów wysokiej jakości w {file_name}")
 
                     # Sprawdzamy czy nie przekroczyliśmy limitu
                     if total_fragments >= max_total_fragments:
@@ -459,7 +494,7 @@ class FragmentDetector:
     def process_single_pdf(self, pdf_path: str, min_confidence: float = 0.3,
                            max_fragments: int = 50) -> List[FunnyFragment]:
         """
-        Przetwarza pojedynczy plik PDF
+        Przetwarza pojedynczy plik PDF - POPRAWIONA WERSJA
 
         Args:
             pdf_path: Ścieżka do pliku PDF
@@ -467,7 +502,7 @@ class FragmentDetector:
             max_fragments: Maksymalna liczba zwracanych fragmentów
 
         Returns:
-            Lista znalezionych fragmentów
+            Lista znalezionych fragmentów wysokiej jakości (bez too_short)
         """
         file_name = os.path.basename(pdf_path)
 
@@ -489,12 +524,12 @@ class FragmentDetector:
         if self.debug:
             self.logger.debug(f"Wyciągnięto {len(text)} znaków tekstu z {file_name}")
 
-        # Znajdujemy śmieszne fragmenty
+        # Znajdujemy śmieszne fragmenty - już filtrowane (bez too_short)
         all_fragments = self.find_funny_fragments(text, min_confidence, file_name)
 
         if not all_fragments:
             if self.debug:
-                self.logger.debug(f"Nie znaleziono fragmentów w {file_name}")
+                self.logger.debug(f"Nie znaleziono fragmentów wysokiej jakości w {file_name}")
             return []
 
         # Ograniczamy liczbę wyników
@@ -502,6 +537,8 @@ class FragmentDetector:
 
         if self.debug:
             self.logger.debug(f"Zwracam {len(fragments)} najlepszych fragmentów z {file_name}")
+            self.logger.debug(
+                f"Statystyki: {self.stats['skipped_too_short']} za krótkich, {self.stats['skipped_duplicates']} duplikatów")
 
         return fragments
 
@@ -544,6 +581,11 @@ class FragmentDetector:
         logger.keyvalue("Nieudane pliki", str(failed_files), Colors.RED if failed_files > 0 else Colors.GREEN)
         logger.keyvalue("Łączna liczba fragmentów", str(total_fragments), Colors.BLUE)
 
+        # NOWE: Dodatkowe statystyki
+        logger.keyvalue("Pominięte za krótkie", str(self.stats['skipped_too_short']), Colors.YELLOW)
+        logger.keyvalue("Pominięte duplikaty", str(self.stats['skipped_duplicates']), Colors.YELLOW)
+        logger.keyvalue("Pominięte niska pewność", str(self.stats['skipped_low_confidence']), Colors.YELLOW)
+
         if total_fragments > 0:
             all_fragments = []
             for fragments in results.values():
@@ -552,6 +594,17 @@ class FragmentDetector:
             avg_confidence = sum(f.confidence_score for f in all_fragments) / len(all_fragments)
             logger.keyvalue("Średnia pewność", f"{avg_confidence:.3f}", Colors.YELLOW)
             logger.keyvalue("Najlepsza pewność", f"{max(f.confidence_score for f in all_fragments):.3f}", Colors.GREEN)
+
+            # NOWE: Statystyki typów humoru
+            humor_types = {}
+            for fragment in all_fragments:
+                humor_type = getattr(fragment, 'humor_type', 'other')
+                humor_types[humor_type] = humor_types.get(humor_type, 0) + 1
+
+            if humor_types:
+                self.logger.info("\nRozkład typów humoru:")
+                for humor_type, count in sorted(humor_types.items(), key=lambda x: x[1], reverse=True):
+                    logger.keyvalue(f"  {humor_type}", str(count), Colors.CYAN)
 
         # Ranking plików
         if results:
@@ -593,7 +646,7 @@ class FragmentDetector:
             max_fragments: Maksymalna liczba zwracanych fragmentów
 
         Returns:
-            Lista znalezionych fragmentów
+            Lista znalezionych fragmentów wysokiej jakości
         """
         path = Path(pdf_path)
 

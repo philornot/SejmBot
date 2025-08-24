@@ -185,7 +185,14 @@ class ConsolePrinter:
         """Wyświetla analizę najaktywniejszych mówców"""
         speakers = {}
         for fragment in fragments:
-            speakers[fragment.speaker] = speakers.get(fragment.speaker, 0) + 1
+            # Tworzymy czytelny klucz string (nie używaj dict jako klucza)
+            speaker_info = fragment.speaker  # To zwraca dict
+            if speaker_info.get('club'):
+                speaker_key = f"{speaker_info['name']} ({speaker_info['club']})"
+            else:
+                speaker_key = speaker_info['name']
+
+            speakers[speaker_key] = speakers.get(speaker_key, 0) + 1
 
         if speakers:
             print()
