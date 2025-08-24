@@ -48,10 +48,8 @@ class FunnyFragment:
         """
         Parsuje raw speaker data do struktury {"name": str, "club": str|None}
         """
-        from SejmBotDetektor.config.keywords import parse_speaker_name_and_club
-
-        # Używamy funkcji pomocniczej z config
-        return parse_speaker_name_and_club(self.speaker_raw)
+        # Użycie wewnętrznej metody parsującej
+        return self._parse_speaker_info(self.speaker_raw)
 
     @staticmethod
     def _parse_speaker_info(speaker_raw: str) -> Dict[str, Optional[str]]:
@@ -211,11 +209,28 @@ class FunnyFragment:
         return "❓ Nieznany klub"
 
     def get_speaker_display(self) -> str:
-        """Zwraca sformatowaną nazwę mówcy z klubem"""
-        speaker_info = self.speaker
-        name = speaker_info.get('name', 'Nieznany')
-        club = speaker_info.get('club')
-        if club and club != "brak klubu":
-            return f"{name} ({club})"
+        """
+        Zwraca sformatowaną nazwę mówcy z klubem, unikając duplikacji
+
+        Returns:
+            Prawidłowo sformatowana nazwa mówcy z klubem
+        """
+        # Sprawdzamy czy w speaker_raw już jest klub w nawiasach
+        if "(" in self.speaker_raw and ")" in self.speaker_raw:
+            # Klub już jest w speaker_raw, sprawdzamy czy nie ma duplikatów
+            if self.speaker_raw.count("(") == 1:
+                # Jeden klub, wszystko w porządku
+                return self.speaker_raw
+            else:
+                # Możliwe duplikaty, czyścimy
+                import re
+                # Usuwamy wszystkie wystąpienia "(brak klubu)"
+                cleaned = re.sub(r'\s*\(brak klubu\)', '', self.speaker_raw, flags=re.IGNORECASE)
+                return cleaned.strip()
         else:
-            return f"{name} (brak klubu)"
+            # Brak klubu w speaker_raw, używamy właściwości speaker
+            speaker_info = self.speaker
+            if speaker_info.get('club'):
+                return f"{speaker_info['name']} ({speaker_info['club']})"
+            else:
+                return f"{speaker_info['name']} (brak klubu)"

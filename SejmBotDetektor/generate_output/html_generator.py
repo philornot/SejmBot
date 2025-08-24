@@ -237,13 +237,8 @@ class HtmlGenerator:
         """
 
         for i, fragment in enumerate(fragments[:15], 1):
-            # Wyświetlanie mówcy w spisie treści
-            speaker_info = fragment.speaker
-            if speaker_info.get('club'):
-                speaker_display = f"{speaker_info['name']} ({speaker_info['club']})"
-            else:
-                speaker_display = f"{speaker_info['name']} (brak klubu)"
-
+            # Używamy nowej metody get_speaker_display()
+            speaker_display = fragment.get_speaker_display()
             html += f'<li><a href="#fragment-{i}">Fragment {i}: {speaker_display} (pewność: {fragment.confidence_score:.2f})</a></li>'
 
         if len(fragments) > 15:
@@ -272,12 +267,8 @@ class HtmlGenerator:
 
             source_file_tag = f'<span class="source-file">{source_file}</span>' if show_source_file else ""
 
-            # Wyświetlanie mówcy
-            speaker_info = fragment.speaker  # To zwraca słownik {"name": str, "club": str|None}
-            if speaker_info.get('club'):
-                speaker_display = f"{speaker_info['name']} ({speaker_info['club']})"
-            else:
-                speaker_display = f"{speaker_info['name']} (brak klubu)"
+            # Używamy nowej metody get_speaker_display()
+            speaker_display = fragment.get_speaker_display()
 
             html += f"""
             <div class="fragment confidence-{conf_class}" id="fragment-{i}">
