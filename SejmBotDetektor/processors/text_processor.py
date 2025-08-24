@@ -207,7 +207,7 @@ class TextProcessor:
                                 club = club_match.group(1).strip()
                                 found_speaker = f"{name} ({club})"
                             else:
-                                found_speaker = f"{name} (brak klubu)"
+                                found_speaker = name  # Zwracamy tylko nazwę
 
                             if self.debug:
                                 self.logger.debug(f"Znaleziono mówcę: '{found_speaker}'")
@@ -227,7 +227,7 @@ class TextProcessor:
                     # Czyścimy z tytułów
                     name = re.sub(r'^(Poseł|Posłanka|Marszałek|Wicemarszałek|Minister|Przewodniczący|Sekretarz)\s+', '',
                                   name, flags=re.IGNORECASE)
-                    found_speaker = f"{name} (brak klubu)"
+                    found_speaker = name
 
                     if self.debug:
                         self.logger.debug(f"Fallback - znaleziono mówcę: '{found_speaker}'")

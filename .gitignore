@@ -1,8 +1,11 @@
 /.venv
 /.idea
 
+SejmBotScraper/data/transkrypty
+SejmBotDetektor/transkrypty
+SejmBotDetektor/output
+
 *.log
-*.pdf
-*.json
-*.csv
-*.html
+*.env
+
+SejmBotDetektor/data/poslowie.html

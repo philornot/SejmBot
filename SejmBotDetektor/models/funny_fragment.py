@@ -10,7 +10,7 @@ from typing import List, Dict, Optional
 
 @dataclass
 class FunnyFragment:
-    """Klasa reprezentująca wykryty śmieszny fragment - rozszerzona wersja"""
+    """Klasa reprezentująca wykryty śmieszny fragment — rozszerzona wersja"""
     text: str
     speaker_raw: str  # Surowe dane o mówcy
     meeting_info: str
@@ -36,7 +36,7 @@ class FunnyFragment:
     timestamp: str = None
 
     def __post_init__(self):
-        """Automatycznie ustawia timestamp i ID jeśli nie podano"""
+        """Automatycznie ustawia timestamp i ID, jeśli nie podano"""
         if self.timestamp is None:
             self.timestamp = datetime.now().isoformat()
 
@@ -45,10 +45,16 @@ class FunnyFragment:
 
     @property
     def speaker(self) -> Dict[str, Optional[str]]:
-        """Zwraca ustrukturyzowane informacje o mówcy"""
-        return self._parse_speaker_info(self.speaker_raw)
+        """
+        Parsuje raw speaker data do struktury {"name": str, "club": str|None}
+        """
+        from SejmBotDetektor.config.keywords import parse_speaker_name_and_club
 
-    def _parse_speaker_info(self, speaker_raw: str) -> Dict[str, Optional[str]]:
+        # Używamy funkcji pomocniczej z config
+        return parse_speaker_name_and_club(self.speaker_raw)
+
+    @staticmethod
+    def _parse_speaker_info(speaker_raw: str) -> Dict[str, Optional[str]]:
         """
         Parsuje informacje o mówcy do ujednoliconej struktury
 
@@ -63,7 +69,7 @@ class FunnyFragment:
         if not speaker_raw or speaker_raw == "Nieznany mówca":
             return {"name": "Nieznany mówca", "club": None}
 
-        # Wzorzec dla nazwa (klub)
+        # Wzorzec dla nazwy (klub)
         club_pattern = re.compile(r'^(.+?)\s*\(([^)]+)\)\s*$')
         match = club_pattern.match(speaker_raw.strip())
 
@@ -115,7 +121,7 @@ class FunnyFragment:
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'FunnyFragment':
-        """Tworzy obiekt ze słownika - obsługuje stary i nowy format"""
+        """Tworzy obiekt ze słownika — obsługuje stary i nowy format"""
 
         # Sprawdzamy czy to nowy format
         if 'speaker' in data and isinstance(data['speaker'], dict):
@@ -170,7 +176,7 @@ class FunnyFragment:
         return ", ".join(self.keywords_found)
 
     def is_high_quality(self, min_confidence: float = 0.5) -> bool:
-        """Sprawdza czy fragment jest wysokiej jakości"""
+        """Sprawdza, czy fragment jest wysokiej jakości"""
         return (not self.too_short and
                 self.confidence_score >= min_confidence and
                 len(self.keywords_found) > 0)
@@ -192,3 +198,24 @@ class FunnyFragment:
             quality_parts.append("wysoka jakość")
 
         return ", ".join(quality_parts)
+
+    def get_club_display(self) -> str:
+        """Zwraca czytelną nazwę klubu lub informację o braku"""
+        speaker_info = self.speaker
+        if isinstance(speaker_info, dict) and speaker_info.get('club'):
+            club = speaker_info['club']
+            if club == "brak klubu":
+                return "🚫 Brak klubu"
+            else:
+                return f"🏛️ {club}"
+        return "❓ Nieznany klub"
+
+    def get_speaker_display(self) -> str:
+        """Zwraca sformatowaną nazwę mówcy z klubem"""
+        speaker_info = self.speaker
+        name = speaker_info.get('name', 'Nieznany')
+        club = speaker_info.get('club')
+        if club and club != "brak klubu":
+            return f"{name} ({club})"
+        else:
+            return f"{name} (brak klubu)"

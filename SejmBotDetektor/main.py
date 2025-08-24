@@ -54,6 +54,17 @@ def main():
         if output_folder:
             logger.info(f"Pliki wyjściowe będą zapisane w folderze: {output_folder}")
 
+        # Sprawdzamy, czy istnieje baza posłów
+        poslowie_file_exists = any(os.path.exists(path) for path in [
+            "poslowie_kluby.json",
+            "SejmBotDetektor/data/poslowie_kluby.json",
+            "data/poslowie_kluby.json"
+        ])
+
+        if not poslowie_file_exists:
+            logger.warning("Nie znaleziono pliku poslowie_kluby.json")
+            logger.info("Utwórz plik poslowie_kluby.json zgodnie z dokumentacją dla lepszego przypisywania klubów")
+
         # Walidacja konfiguracji
         from SejmBotDetektor.config.keywords import KeywordsConfig
         issues = KeywordsConfig.validate_keywords()

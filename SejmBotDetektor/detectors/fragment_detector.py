@@ -1,12 +1,13 @@
 """
 Główny moduł do wykrywania śmiesznych fragmentów w transkryptach Sejmu
-POPRAWIONA WERSJA z nowymi wymaganiami
+POPRAWIONA WERSJA z bazą posłów i menadżerem klubów
 """
 import os
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
 
 from SejmBotDetektor.analyzers.fragment_analyzer import FragmentAnalyzer
+from SejmBotDetektor.data.poslowie_manager import PoslowieManager
 from SejmBotDetektor.logging.logger import get_module_logger, logger, Colors
 from SejmBotDetektor.models.funny_fragment import FunnyFragment
 from SejmBotDetektor.processors.pdf_processor import PDFProcessor
@@ -14,7 +15,7 @@ from SejmBotDetektor.processors.text_processor import TextProcessor
 
 
 class FragmentDetector:
-    """Główna klasa do wykrywania śmiesznych fragmentów - POPRAWIONA WERSJA"""
+    """Główna klasa do wykrywania śmiesznych fragmentów - WERSJA Z BAZĄ POSŁÓW"""
 
     def __init__(self, context_before: int = 49, context_after: int = 100, debug: bool = False):
         """
@@ -27,6 +28,7 @@ class FragmentDetector:
         """
         self.logger = get_module_logger("FragmentDetector")
 
+        # todo: unreachable code?
         # Walidacja parametrów
         if not isinstance(context_before, int) or not isinstance(context_after, int):
             raise TypeError("Parametry kontekstu muszą być liczbami całkowitymi")
@@ -50,6 +52,9 @@ class FragmentDetector:
         self.pdf_processor = PDFProcessor(debug=debug)
         self.fragment_analyzer = FragmentAnalyzer(debug=debug)
 
+        # NOWY: Inicjalizujemy menadżera posłów
+        self.poslowie_manager = PoslowieManager(debug=debug)
+
         # Statystyki wydajności
         self.stats = {
             'processed_texts': 0,
@@ -59,16 +64,20 @@ class FragmentDetector:
             'skipped_low_confidence': 0,
             'skipped_too_short': 0,
             'processed_files': 0,
-            'failed_files': 0
+            'failed_files': 0,
+            'club_matches': 0,
+            'club_misses': 0
         }
 
         if self.debug:
             self.logger.debug(f"Inicjalizowano z kontekstem: {context_before}/{context_after}")
+            stats = self.poslowie_manager.get_stats()
+            self.logger.debug(f"Załadowano bazę: {stats['total_deputies']} posłów z {stats['total_clubs']} klubów")
 
     def find_funny_fragments(self, text: str, min_confidence: float = 0.3, source_file: str = None) -> List[
         FunnyFragment]:
         """
-        Znajduje śmieszne fragmenty w tekście - POPRAWIONA WERSJA
+        Znajduje śmieszne fragmenty w tekście - WERSJA Z BAZĄ POSŁÓW
 
         Args:
             text: Tekst do przeanalizowania
@@ -94,7 +103,7 @@ class FragmentDetector:
                 self.logger.debug(f"Tekst pusty po czyszczeniu {f'w pliku {source_file}' if source_file else ''}")
             return []
 
-        # NOWE: Filtracja markerów stenogramu
+        # Filtracja markerów stenogramu
         cleaned_text = self.fragment_analyzer.filter_protocol_markers(cleaned_text)
 
         # Używamy nowej metody wyszukiwania słów kluczowych
@@ -135,14 +144,14 @@ class FragmentDetector:
                 )
 
                 if fragment_result:
-                    # NOWE: Sprawdzamy czy fragment nie jest za krótki
+                    # Sprawdzamy, czy fragment nie jest za krótki
                     if fragment_result.too_short:
                         self.stats['skipped_too_short'] += 1
                         if self.debug:
                             self.logger.debug(f"Fragment za krótki, pomijam: {len(fragment_result.text.split())} słów")
                         continue
 
-                    # NOWE: Sprawdzamy duplikaty z fuzzy matching
+                    # Sprawdzamy duplikaty z fuzzy matching
                     if self.fragment_analyzer.is_duplicate_fuzzy(fragment_result.text, existing_texts, 0.85):
                         self.stats['skipped_duplicates'] += 1
                         if self.debug:
@@ -210,7 +219,7 @@ class FragmentDetector:
 
         return groups
 
-    @staticmethod
+    @staticmethod  # todo: `text` not used
     def _finalize_group(group: List[Tuple[str, int]], text: str) -> Tuple[int, List[str]]:
         """
         Finalizuje grupę słów kluczowych
@@ -238,7 +247,7 @@ class FragmentDetector:
                                meeting_info: str, min_confidence: float,
                                existing_texts: List[str]) -> Optional[FunnyFragment]:
         """
-        Przetwarza grupę słów kluczowych w fragment - POPRAWIONA WERSJA
+        Przetwarza grupę słów kluczowych w fragment - WERSJA Z BAZĄ POSŁÓW
 
         Returns:
             FunnyFragment lub None jeśli fragment odrzucony
@@ -258,7 +267,7 @@ class FragmentDetector:
         if not fragment_text:
             return None
 
-        # NOWE: Czyścimy tekst fragmentu
+        # Czyścimy tekst fragmentu
         fragment_text = self.fragment_analyzer.clean_fragment_text(fragment_text)
 
         if not fragment_text or len(fragment_text.strip()) < 10:
@@ -274,7 +283,7 @@ class FragmentDetector:
                 self.logger.debug("Brak zweryfikowanych słów kluczowych")
             return None
 
-        # NOWE: Obliczamy szczegółowy confidence z rozbiciem na składowe
+        # Obliczamy szczegółowy confidence z rozbiciem na składowe
         confidence_details = self.fragment_analyzer.calculate_confidence_detailed(
             fragment_text, verified_keywords
         )
@@ -287,14 +296,15 @@ class FragmentDetector:
             original_text, fragment_text, verified_keywords[0]
         )
 
-        # Znajdujemy mówcę
-        speaker_raw = self._find_speaker_with_club(
+        # NOWA METODA: Znajdujemy mówcę używając bazy posłów
+        speaker_raw = self._find_speaker_with_club_new(
             original_text, original_position if original_position != -1 else 0
         )
-        # NOWE: Określamy typ humoru
+
+        # Określamy typ humoru
         humor_type = self.fragment_analyzer.determine_humor_type(verified_keywords, fragment_text)
 
-        # NOWE: Wyciągamy kontekst zdaniowy
+        # Wyciągamy kontekst zdaniowy
         sentence_context = self.fragment_analyzer.extract_sentence_context(
             original_text, original_position if original_position != -1 else 0, 1, 1
         )
@@ -330,6 +340,41 @@ class FragmentDetector:
         )
 
         return fragment
+
+    def _find_speaker_with_club_new(self, original_text: str, position: int) -> str:
+        """
+        Nowa metoda - znajduje mówcę używając bazy posłów
+
+        Args:
+            original_text: Pełny tekst transkryptu
+            position: Pozycja fragmentu w tekście
+
+        Returns:
+            Nazwa mówcy z klubem w formacie "Imię Nazwisko (Klub)"
+        """
+        if not original_text or position < 0:
+            return "Nieznany mówca"
+
+        # Najpierw znajdźmy surową nazwę mówcy (stara metoda z TextProcessor)
+        raw_speaker = self.text_processor.find_speaker(original_text, position)
+
+        if raw_speaker == "Nieznany mówca":
+            self.stats['club_misses'] += 1
+            return "Nieznany mówca"
+
+        # Teraz użyjmy menadżera posłów do znalezienia klubu
+        cleaned_name, club = self.poslowie_manager.find_club_for_speaker(raw_speaker)
+
+        if club:
+            self.stats['club_matches'] += 1
+            if self.debug:
+                self.logger.debug(f"Znaleziono klub: '{cleaned_name}' -> '{club}'")
+            return f"{cleaned_name} ({club})"
+        else:
+            self.stats['club_misses'] += 1
+            if self.debug:
+                self.logger.debug(f"Nie znaleziono klubu dla: '{cleaned_name}'")
+            return f"{cleaned_name} (brak klubu)"
 
     @staticmethod
     def _build_char_to_word_mapping(text: str) -> dict:
@@ -399,7 +444,7 @@ class FragmentDetector:
                            max_fragments_per_file: int = 50, max_total_fragments: int = 200) -> Dict[
         str, List[FunnyFragment]]:
         """
-        Przetwarza wszystkie pliki PDF w folderze - POPRAWIONA WERSJA
+        Przetwarza wszystkie pliki PDF w folderze - WERSJA Z BAZĄ POSŁÓW
 
         Args:
             folder_path: Ścieżka do folderu z plikami PDF
@@ -493,7 +538,7 @@ class FragmentDetector:
     def process_single_pdf(self, pdf_path: str, min_confidence: float = 0.3,
                            max_fragments: int = 50) -> List[FunnyFragment]:
         """
-        Przetwarza pojedynczy plik PDF - POPRAWIONA WERSJA
+        Przetwarza pojedynczy plik PDF - WERSJA Z BAZĄ POSŁÓW
 
         Args:
             pdf_path: Ścieżka do pliku PDF
@@ -541,7 +586,8 @@ class FragmentDetector:
 
         return fragments
 
-    def _limit_total_fragments(self, results: Dict[str, List[FunnyFragment]],
+    @staticmethod
+    def _limit_total_fragments(results: Dict[str, List[FunnyFragment]],
                                max_total: int) -> Dict[str, List[FunnyFragment]]:
         """
         Ogranicza całkowitą liczbę fragmentów do określonego limitu,
@@ -569,7 +615,7 @@ class FragmentDetector:
         return new_results
 
     def _print_folder_results_summary(self, results: Dict[str, List[FunnyFragment]], all_files: List[str]):
-        """Wyświetla podsumowanie wyników przetwarzania folderu"""
+        """Wyświetla podsumowanie wyników przetwarzania folderu z statystykami klubów"""
         logger.section("PODSUMOWANIE PRZETWARZANIA FOLDERU")
 
         total_fragments = sum(len(fragments) for fragments in results.values())
@@ -580,7 +626,11 @@ class FragmentDetector:
         logger.keyvalue("Nieudane pliki", str(failed_files), Colors.RED if failed_files > 0 else Colors.GREEN)
         logger.keyvalue("Łączna liczba fragmentów", str(total_fragments), Colors.BLUE)
 
-        # NOWE: Dodatkowe statystyki
+        # Statystyki klubów
+        logger.keyvalue("Znaleziono kluby", str(self.stats['club_matches']), Colors.GREEN)
+        logger.keyvalue("Nie znaleziono klubów", str(self.stats['club_misses']), Colors.YELLOW)
+
+        # Dodatkowe statystyki
         logger.keyvalue("Pominięte za krótkie", str(self.stats['skipped_too_short']), Colors.YELLOW)
         logger.keyvalue("Pominięte duplikaty", str(self.stats['skipped_duplicates']), Colors.YELLOW)
         logger.keyvalue("Pominięte niska pewność", str(self.stats['skipped_low_confidence']), Colors.YELLOW)
@@ -594,7 +644,7 @@ class FragmentDetector:
             logger.keyvalue("Średnia pewność", f"{avg_confidence:.3f}", Colors.YELLOW)
             logger.keyvalue("Najlepsza pewność", f"{max(f.confidence_score for f in all_fragments):.3f}", Colors.GREEN)
 
-            # NOWE: Statystyki typów humoru
+            # Statystyki typów humoru
             humor_types = {}
             for fragment in all_fragments:
                 humor_type = getattr(fragment, 'humor_type', 'other')
@@ -604,6 +654,20 @@ class FragmentDetector:
                 self.logger.info("\nRozkład typów humoru:")
                 for humor_type, count in sorted(humor_types.items(), key=lambda x: x[1], reverse=True):
                     logger.keyvalue(f"  {humor_type}", str(count), Colors.CYAN)
+
+            # NOWE: Statystyki klubów
+            club_stats = {}
+            for fragment in all_fragments:
+                speaker_info = fragment.speaker
+                club = speaker_info.get('club') if isinstance(speaker_info, dict) else None
+                if club and club != "brak klubu":
+                    club_stats[club] = club_stats.get(club, 0) + 1
+
+            if club_stats:
+                self.logger.info("\nRanking klubów (najczęściej cytowani):")
+                sorted_clubs = sorted(club_stats.items(), key=lambda x: x[1], reverse=True)
+                for i, (club, count) in enumerate(sorted_clubs[:10], 1):
+                    logger.keyvalue(f"  {i}. {club}", f"{count} fragmentów", Colors.CYAN)
 
         # Ranking plików
         if results:
@@ -617,7 +681,8 @@ class FragmentDetector:
                                     f"{len(fragments)} fragmentów (śr. pewność: {avg_conf:.2f})",
                                     Colors.CYAN)
 
-    def get_all_fragments_sorted(self, results: Dict[str, List[FunnyFragment]]) -> List[FunnyFragment]:
+    @staticmethod
+    def get_all_fragments_sorted(results: Dict[str, List[FunnyFragment]]) -> List[FunnyFragment]:
         """
         Zwraca wszystkie fragmenty z wszystkich plików posortowane według pewności
 
@@ -663,90 +728,18 @@ class FragmentDetector:
             raise ValueError(f"Ścieżka {pdf_path} nie jest ani plikiem PDF ani folderem")
 
     def get_processing_stats(self) -> dict:
-        """Zwraca statystyki ostatniego przetwarzania"""
-        return self.stats.copy()
+        """Zwraca statystyki ostatniego przetwarzania włącznie z klubami"""
+        stats = self.stats.copy()
+        stats['poslowie_manager_stats'] = self.poslowie_manager.get_stats()
+        return stats
 
     def reset_stats(self):
         """Resetuje statystyki przetwarzania"""
         self.stats = {k: 0 for k in self.stats}
+        self.poslowie_manager.clear_cache()
 
+    # DEPRECATED METHOD - zachowana dla kompatybilności
     def _find_speaker_with_club(self, original_text: str, position: int) -> str:
-        """
-        Znajduje mówcę z informacją o klubie parlamentarnym
-
-        Args:
-            original_text: Pełny tekst transkryptu
-            position: Pozycja fragmentu w tekście
-
-        Returns:
-            Nazwa mówcy z klubem (jeśli dostępny)
-        """
-        if not original_text or position < 0:
-            return "Nieznany mówca"
-
-        # Szukamy wstecz od pozycji fragmentu
-        search_start = max(0, position - 2000)  # Szukamy w promieniu 2000 znaków
-        text_section = original_text[search_start:position + 500]
-
-        # Wzorce dla mówców z klubami
-        import re
-
-        # Wzorzec 1: "Poseł/Posłanka Imię Nazwisko (Klub):"
-        speaker_patterns = [
-            r'Poseł(?:anka)?\s+([^:()]+)\s*\(([^)]+)\)\s*:',
-            r'Marszałek\s+([^:()]+)\s*\(([^)]+)\)\s*:',
-            r'Wicemarszałek\s+([^:()]+)\s*\(([^)]+)\)\s*:',
-            r'Przewodniczący\s+([^:()]+)\s*\(([^)]+)\)\s*:',
-            r'Minister\s+([^:()]+)\s*\(([^)]+)\)\s*:',
-            r'Sekretarz\s+([^:()]+)\s*\(([^)]+)\)\s*:',
-
-            # Wzorzec 2: "Imię Nazwisko (Klub):"
-            r'([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+\s+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+)\s*\(([^)]+)\)\s*:',
-
-            # Wzorzec 3: Bez tytułu ale z dwukropkiem "Jan Kowalski (PiS):"
-            r'^([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż]+(?:\s+[A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż-]+)*)\s*\(([^)]+)\)\s*:',
-        ]
-
-        # Szukamy od końca tekstu (najbliższy mówca)
-        lines = text_section.split('\n')
-        lines.reverse()
-
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            for pattern in speaker_patterns:
-                match = re.search(pattern, line, re.MULTILINE | re.IGNORECASE)
-                if match:
-                    if len(match.groups()) >= 2:
-                        name = match.group(1).strip()
-                        club = match.group(2).strip()
-
-                        # Czyścimy nazwę z tytułów
-                        name = re.sub(r'^(Poseł|Posłanka|Marszałek|Wicemarszałek|Minister|Przewodniczący|Sekretarz)\s+',
-                                      '', name, flags=re.IGNORECASE)
-                        name = name.strip()
-
-                        if name and club:
-                            return f"{name} ({club})"
-                    else:
-                        # Jeśli tylko jedna grupa - znaczy że to nazwa bez klubu
-                        name = match.group(1).strip()
-                        name = re.sub(r'^(Poseł|Posłanka|Marszałek|Wicemarszałek|Minister|Przewodniczący|Sekretarz)\s+',
-                                      '', name, flags=re.IGNORECASE)
-                        return name.strip()
-
-        # Fallback - użyj oryginalnej metody TextProcessor
-        original_speaker = self.text_processor.find_speaker(original_text, position)
-
-        # Sprawdź czy oryginalny wynik ma już klub
-        if '(' in original_speaker and ')' in original_speaker:
-            return original_speaker
-        else:
-            return f"{original_speaker} (brak klubu)" if original_speaker != "Nieznany mówca" else "Nieznany mówca"
-
-    # W metodzie _process_keyword_group zamień:
-    #
-    # NA:
-    #
+        """DEPRECATED: Użyj _find_speaker_with_club_new()"""
+        self.logger.warning("_find_speaker_with_club jest deprecated - używając _find_speaker_with_club_new")
+        return self._find_speaker_with_club_new(original_text, position)

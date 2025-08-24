@@ -293,7 +293,6 @@ class ModuleLogger:
         if self.parent:
             self.parent.critical(message, self.module_name)
 
-    # DODANE BRAKUJĄCE METODY:
     def header(self, message: str):
         """Wyświetla nagłówek sekcji"""
         if self.parent:
