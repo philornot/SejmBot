@@ -4,6 +4,7 @@ Moduł do obsługi plików PDF z transkryptami Sejmu
 import pypdf
 from SejmBotDetektor.logging.logger import get_module_logger
 
+
 class PDFProcessor:
     """Klasa do przetwarzania plików PDF"""
 
@@ -61,7 +62,7 @@ class PDFProcessor:
 
     def validate_pdf_file(self, pdf_path: str) -> tuple[bool, str]:
         """
-        Sprawdza czy plik PDF jest prawidłowy i można go odczytać
+        Sprawdza, czy plik PDF jest prawidłowy i można go odczytać
 
         Args:
             pdf_path: Ścieżka do pliku PDF
