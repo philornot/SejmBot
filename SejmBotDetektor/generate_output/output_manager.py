@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import List, Dict, Union
 
+from SejmBotDetektor.detectors.fragment_detector import FragmentDetector
 from SejmBotDetektor.generate_output.console_printer import ConsolePrinter
 from SejmBotDetektor.generate_output.html_generator import HtmlGenerator
 from SejmBotDetektor.generate_output.json_exporter import JsonExporter
@@ -221,3 +222,161 @@ class OutputManager:
         """DEPRECATED: Użyj print_results()"""
         self.logger.warning("print_fragments jest deprecated - użyj print_results()")
         self.print_results(fragments, max_fragments)
+
+    """
+    Dodana metoda process_folder_results do OutputManager
+    Lokalizacja: SejmBotDetektor/generate_output/output_manager.py
+    """
+
+    def process_folder_results(self, folder_path: str, min_confidence: float = 0.3,
+                               max_fragments_per_file: int = 50, max_total_fragments: int = 200,
+                               context_before: int = 50, context_after: int = 100) -> Dict[str, List]:
+        """
+        Kompletny workflow przetwarzania folderu PDF - od skanowania do eksportu
+
+        Args:
+            folder_path: Ścieżka do folderu z plikami PDF
+            min_confidence: Minimalny próg pewności
+            max_fragments_per_file: Maksymalna liczba fragmentów z jednego pliku
+            max_total_fragments: Maksymalna całkowita liczba fragmentów
+            context_before: Liczba słów kontekstu przed
+            context_after: Liczba słów kontekstu po
+
+        Returns:
+            Słownik {nazwa_pliku: lista_fragmentów}
+        """
+        from pathlib import Path
+
+        if self.debug:
+            self.logger.debug(f"Rozpoczynam pełny workflow dla folderu: {folder_path}")
+
+        # Walidacja folderu
+        folder = Path(folder_path)
+        if not folder.exists():
+            self.logger.error(f"Folder {folder_path} nie istnieje")
+            return {}
+
+        pdf_files = list(folder.glob("*.pdf"))
+        if not pdf_files:
+            self.logger.warning(f"Nie znaleziono plików PDF w folderze {folder_path}")
+            return {}
+
+        self.logger.info(f"Znaleziono {len(pdf_files)} plików PDF do przetworzenia")
+
+        # Inicjalizujemy FragmentDetetector
+        fragment_detector = FragmentDetector(debug=self.debug)
+
+        results = {}
+        total_fragments = 0
+
+        for i, pdf_path in enumerate(pdf_files, 1):
+            file_name = pdf_path.name
+
+            if self.debug:
+                self.logger.debug(f"Przetwarzanie {i}/{len(pdf_files)}: {file_name}")
+            else:
+                self.logger.info(f"Przetwarzanie pliku {i}/{len(pdf_files)}: {file_name}")
+
+            try:
+                # Sprawdzamy limit przed przetworzeniem
+                if total_fragments >= max_total_fragments:
+                    self.logger.warning(f"Osiągnięto limit {max_total_fragments} fragmentów")
+                    break
+
+                # Dostosowujemy limit dla tego pliku
+                remaining_limit = max_total_fragments - total_fragments
+                file_limit = min(max_fragments_per_file, remaining_limit)
+
+                # Przetwarzamy pojedynczy plik przez SpeechProcessor
+                fragments = fragment_detector.process_single_pdf(
+                    str(pdf_path), min_confidence, file_limit
+                )
+
+                if fragments:
+                    results[file_name] = fragments
+                    total_fragments += len(fragments)
+                    self.logger.info(f"Znaleziono {len(fragments)} fragmentów w {file_name}")
+                else:
+                    if self.debug:
+                        self.logger.debug(f"Brak fragmentów w {file_name}")
+
+            except Exception as e:
+                self.logger.error(f"Błąd podczas przetwarzania {file_name}: {e}")
+                if self.debug:
+                    import traceback
+                    self.logger.debug(f"Szczegóły błędu: {traceback.format_exc()}")
+                continue
+
+        # Ograniczamy wyniki do max_total_fragments jeśli potrzeba
+        if total_fragments > max_total_fragments:
+            results = self._limit_total_fragments(results, max_total_fragments)
+
+        self.logger.info(f"Zakończono przetwarzanie. Łącznie {sum(len(f) for f in results.values())} fragmentów")
+        return results
+
+    def process_single_file_complete(self, pdf_path: str, min_confidence: float = 0.3,
+                                     max_fragments: int = 50, include_export: bool = True) -> List:
+        """
+        Kompletny workflow dla pojedynczego pliku - przetwarzanie + opcjonalny eksport
+
+        Args:
+            pdf_path: Ścieżka do pliku PDF
+            min_confidence: Minimalny próg pewności
+            max_fragments: Maksymalna liczba fragmentów
+            include_export: Czy automatycznie eksportować wyniki
+
+        Returns:
+            Lista znalezionych fragmentów
+        """
+        file_name = os.path.basename(pdf_path)
+
+        if self.debug:
+            self.logger.debug(f"Rozpoczynam kompletny workflow dla: {file_name}")
+
+        # Przetwarzanie
+        fragments = speech_processor.process_single_pdf(
+            pdf_path, min_confidence, max_fragments
+        )
+
+        if not fragments:
+            self.logger.warning("Nie znaleziono fragmentów spełniających kryteria")
+            return []
+
+        # Wyświetlenie wyników
+        self.print_results(fragments, max_fragments=5)
+
+        # Opcjonalny eksport
+        if include_export:
+            export_config = {
+                "min_confidence": min_confidence,
+                "max_fragments": max_fragments,
+                "source_file": file_name
+            }
+
+            if self.export_results(fragments, "single_file_results", self.debug, export_config):
+                self.logger.success("Eksport zakończony pomyślnie")
+
+            self.print_export_summary()
+
+        return fragments
+
+    def _limit_total_fragments(self, results: Dict[str, List], max_total: int) -> Dict[str, List]:
+        """
+        Ogranicza całkowitą liczbę fragmentów do określonego limitu,
+        zachowując te o najwyższej pewności
+        """
+        all_fragments_with_source = []
+        for file_name, fragments in results.items():
+            for fragment in fragments:
+                all_fragments_with_source.append((fragment, file_name))
+
+        all_fragments_with_source.sort(key=lambda x: x[0].confidence_score, reverse=True)
+        limited_fragments = all_fragments_with_source[:max_total]
+
+        new_results = {}
+        for fragment, file_name in limited_fragments:
+            if file_name not in new_results:
+                new_results[file_name] = []
+            new_results[file_name].append(fragment)
+
+        return new_results

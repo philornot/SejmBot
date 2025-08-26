@@ -536,30 +536,39 @@ class FragmentDetector:
         return results
 
     def process_single_pdf(self, pdf_path: str, min_confidence: float = 0.3,
-                           max_fragments: int = 50) -> List[FunnyFragment]:
+                           max_fragments: int = 50) -> List:
         """
-        Przetwarza pojedynczy plik PDF - WERSJA Z BAZĄ POSŁÓW
+        Przetwarza pojedynczy PDF z wykorzystaniem speech-based approach
 
         Args:
             pdf_path: Ścieżka do pliku PDF
-            min_confidence: Minimalny próg pewności (0.1-0.95)
-            max_fragments: Maksymalna liczba zwracanych fragmentów
+            min_confidence: Minimalny próg pewności
+            max_fragments: Maksymalna liczba fragmentów
 
         Returns:
-            Lista znalezionych fragmentów wysokiej jakości (bez too_short)
+            Lista fragmentów FunnyFragmentV2
         """
+        import os
+
         file_name = os.path.basename(pdf_path)
 
-        # Sprawdzamy czy plik jest prawidłowy
+        if self.debug:
+            self.logger.debug(f"Rozpoczynam przetwarzanie: {file_name}")
+
+        # Inicjalizujemy PDF processor, jeśli nie ma
+        if not hasattr(self, 'pdf_processor'):
+            self.pdf_processor = PDFProcessor(debug=self.debug)
+
+            # Inicjalizujemy TextProcessor, jeśli nie ma
+        if not hasattr(self, 'text_processor'):
+            self.text_processor = TextProcessor(debug=self.debug)
+
+        # Walidacja i ekstrakcja tekstu
         is_valid, validation_message = self.pdf_processor.validate_pdf_file(pdf_path)
         if not is_valid:
             self.logger.error(f"Walidacja {file_name} nieudana: {validation_message}")
             return []
 
-        if self.debug:
-            self.logger.debug(f"Plik {file_name} zwalidowany pomyślnie")
-
-        # Wyciągamy tekst
         text = self.pdf_processor.extract_text_from_pdf(pdf_path)
         if not text:
             self.logger.error(f"Nie udało się wyciągnąć tekstu z {file_name}")
@@ -568,21 +577,16 @@ class FragmentDetector:
         if self.debug:
             self.logger.debug(f"Wyciągnięto {len(text)} znaków tekstu z {file_name}")
 
-        # Znajdujemy śmieszne fragmenty - już filtrowane (bez too_short)
-        all_fragments = self.find_funny_fragments(text, min_confidence, file_name)
-
-        if not all_fragments:
-            if self.debug:
-                self.logger.debug(f"Nie znaleziono fragmentów wysokiej jakości w {file_name}")
-            return []
-
-        # Ograniczamy liczbę wyników
-        fragments = all_fragments[:max_fragments]
+        # Podział na wypowiedzi i analiza
+        fragments = self.text_processor.process_text_to_fragments(
+            text=text,
+            source_file=file_name,
+            min_confidence=min_confidence,
+            max_fragments=max_fragments
+        )
 
         if self.debug:
-            self.logger.debug(f"Zwracam {len(fragments)} najlepszych fragmentów z {file_name}")
-            self.logger.debug(
-                f"Statystyki: {self.stats['skipped_too_short']} za krótkich, {self.stats['skipped_duplicates']} duplikatów")
+            self.logger.debug(f"Znaleziono {len(fragments)} fragmentów w {file_name}")
 
         return fragments
 

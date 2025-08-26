@@ -395,3 +395,58 @@ class TextProcessor:
         #     self.logger.debug(f"Wyciągnięto kontekst [{start_idx}:{end_idx}] = {len(fragment_words)} słów")
 
         return fragment_text
+
+    def process_text_to_fragments(self, text: str, source_file: str = "",
+                                  min_confidence: float = 0.3, max_fragments: int = 50) -> List:
+        """
+        Przetwarza tekst na fragmenty FunnyFragment używając speech-based approach
+
+        Args:
+            text: Tekst do przetworzenia
+            source_file: Nazwa pliku źródłowego
+            min_confidence: Minimalny próg pewności
+            max_fragments: Maksymalna liczba fragmentów
+
+        Returns:
+            Lista fragmentów FunnyFragment
+        """
+        if not text or not text.strip():
+            if self.debug:
+                self.logger.debug(f"Pusty tekst wejściowy {f'w pliku {source_file}' if source_file else ''}")
+            return []
+
+        # Import tutaj aby uniknąć circular imports
+        from SejmBotDetektor.detectors.fragment_detector import FragmentDetector
+
+        # Tworzymy detektor fragmentów
+        detector = FragmentDetector(debug=self.debug)
+
+        if self.debug:
+            self.logger.debug(f"Rozpoczynam analizę tekstu {f'({source_file})' if source_file else ''}")
+            self.logger.debug(f"Długość tekstu: {len(text)} znaków")
+
+        # Znajdowanie fragmentów przy użyciu detektora
+        fragments = detector.find_funny_fragments(
+            text=text,
+            min_confidence=min_confidence,
+            source_file=source_file
+        )
+
+        if not fragments:
+            if self.debug:
+                self.logger.debug("Nie znaleziono fragmentów spełniających kryteria")
+            return []
+
+        # Ograniczamy liczbę fragmentów
+        limited_fragments = fragments[:max_fragments]
+
+        if self.debug:
+            self.logger.debug(f"Zwracam {len(limited_fragments)} fragmentów z {len(fragments)} znalezionych")
+
+            # Dodatkowe statystyki
+            if limited_fragments:
+                avg_confidence = sum(f.confidence_score for f in limited_fragments) / len(limited_fragments)
+                best_confidence = max(f.confidence_score for f in limited_fragments)
+                self.logger.debug(f"Średnia pewność: {avg_confidence:.3f}, najlepsza: {best_confidence:.3f}")
+
+        return limited_fragments
