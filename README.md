@@ -81,8 +81,8 @@ System używa wielokryterialnej analizy:
 
 - [ ] **Etap 3:** Bot do automatycznego pobierania transkryptów
 - [ ] **Etap 4:** Integracja z API OpenAI dla lepszej analizy humoru
-- [ ] **Etap 5:** Backend i baza danych (Supabase)
-- [ ] **Etap 6:** Aplikacja mobilna (Flutter/React Native)
+- [ ] **Etap 5:** Backend i baza danych (Firebase)
+- [ ] **Etap 6:** Aplikacja mobilna (Kotlin)
 - [ ] **Etap 7:** System powiadomień push
 - [ ] **Etap 8:** Deployment i automatyzacja
 
