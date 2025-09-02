@@ -13,9 +13,6 @@ do bazy danych, skąd jest przesyłany do aplikacji mobilnej. End user dostaje p
 API nagłówkiem śmiesznej wypowiedzi (podsumowaniem jej np.), klika w powiadomienie i jest 10 % szans że się uśmiechnie
 pod nosem, i jego dzień będzie o 🤏 lepszy dzięki mnie.
 
-**Cel:** Użytkownik dostaje powiadomienie z wygenerowanym przez AI nagłówkiem śmiesznej wypowiedzi, klika w
-powiadomienie i jest 10% szans że się uśmiechnie pod nosem, i jego dzień będzie o 🤏 lepszy dzięki mnie.
-
 ## Architektura systemu
 
 ### Pipeline przetwarzania:
