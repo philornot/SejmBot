@@ -103,13 +103,13 @@ max_total_fragments = 500  # Duży limit całkowity
 
 ```bash
 # Pobierz całą kadencję z wypowiedziami
-python scraper/main.py -t 10 --statements -v --log-file kadencja_10.log
+python SejmBotScraper/main.py -t 10 --statements -v --log-file kadencja_10.log
 
 # Pobierz konkretne posiedzenia
-python scraper/main.py -t 10 -p 15
+python SejmBotScraper/main.py -t 10 -p 15
 
 # Sprawdź dostępne kadencje
-python scraper/main.py --list-terms
+python SejmBotScraper/main.py --list-terms
 ```
 
 ### SejmBotDetektor - Analiza humoru
@@ -151,13 +151,11 @@ System generuje automatyczne statystyki:
 
 **Status:** Production ready  
 **Funkcja:** Automatyczne pobieranie stenogramów z API Sejmu RP  
-**Repo:** [SejmBot-scraper](https://github.com/philornot/SejmBot-scraper)
 
 ### 🎭 SejmBotDetektor
 
 **Status:** Zaimplementowany  
 **Funkcja:** Wykrywanie potencjalnie śmiesznych fragmentów  
-**Lokalizacja:** `SejmBotDetektor/` w tym repo
 
 ### 🤖 SejmBotAI
 
@@ -233,7 +231,7 @@ W [`keywords.py`](https://github.com/philornot/SejmBot/blob/main/SejmBotDetektor
 Projekt stworzony w celach edukacyjnych i rozrywkowych.  
 Wykorzystuje publiczne transkrypty z posiedzeń Sejmu RP.
 
-[Oprogramowanie jest na licencji MIT.](https://github.com/philornot/SejmBot/blob/main/LICENSE)
+[Oprogramowanie jest na licencji Apache 2.0.](https://github.com/philornot/SejmBot/blob/main/LICENSE)
 
 ---
 
