@@ -1,4 +1,4 @@
-# SejmBot-scraper
+# SejmBotScraper
 
 Narzędzie do automatycznego pobierania stenogramów z posiedzeń Sejmu Rzeczypospolitej Polskiej za pomocą
 oficjalnego API. Stworzony jako część projektu **SejmBot** — systemu wykrywającego śmieszne momenty z polskiego
