@@ -41,7 +41,8 @@ class MPScraper:
 
         return mp_dir
 
-    def _save_json(self, data: Dict, filepath: Path) -> bool:
+    @staticmethod
+    def _save_json(data: Dict, filepath: Path) -> bool:
         """Zapisuje dane do pliku JSON"""
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -122,6 +123,26 @@ class MPScraper:
             logger.warning(f"Błąd pobierania statystyk głosowań posła {mp_id}: {e}")
             return None
 
+    @staticmethod
+    def _safe_format_id(id_value, default_width=2):
+        """
+        Bezpiecznie formatuje ID - może być string lub int
+
+        Args:
+            id_value: wartość ID (string lub int)
+            default_width: szerokość formatowania dla int
+
+        Returns:
+            Sformatowane ID jako string
+        """
+        try:
+            # Spróbuj przekonwertować na int i sformatować
+            id_int = int(id_value)
+            return f"{id_int:0{default_width}d}"
+        except (ValueError, TypeError):
+            # Jeśli nie da się przekonwertować, użyj jako string
+            return str(id_value)
+
     def scrape_clubs(self, term: int = DEFAULT_TERM) -> Dict:
         """
         Pobiera informacje o klubach parlamentarnych
@@ -165,7 +186,9 @@ class MPScraper:
                     club_details = self.api._make_request(f"/sejm/term{term}/clubs/{club_id}")
                     if club_details:
                         safe_name = self._make_safe_filename(club_name)
-                        club_path = clubs_dir / f"klub_{club_id:02d}_{safe_name}.json"
+                        # Bezpieczne formatowanie ID
+                        formatted_id = self._safe_format_id(club_id, 2)
+                        club_path = clubs_dir / f"klub_{formatted_id}_{safe_name}.json"
                         self._save_json(club_details, club_path)
 
                     # Logo klubu
@@ -181,7 +204,9 @@ class MPScraper:
                         else:
                             ext = 'png'  # domyślnie
 
-                        logo_path = clubs_dir / f"logo_{club_id:02d}_{safe_name}.{ext}"
+                        safe_name = self._make_safe_filename(club_name)
+                        formatted_id = self._safe_format_id(club_id, 2)
+                        logo_path = clubs_dir / f"logo_{formatted_id}_{safe_name}.{ext}"
                         with open(logo_path, 'wb') as f:
                             f.write(logo_content)
                         logger.debug(f"Zapisano logo klubu: {logo_path}")
@@ -254,13 +279,13 @@ class MPScraper:
                         # Ścieżki do dodatkowych plików
                         mp_details['_files'] = {}
 
-                        # Pobierz zdjęcie jeśli wymagane
+                        # Pobierz zdjęcie, jeśli wymagane
                         if download_photos:
                             photo_path = self._download_mp_photo(term, mp_id, mp_dir)
                             if photo_path:
                                 mp_details['_files']['photo'] = photo_path
 
-                        # Pobierz statystyki głosowań jeśli wymagane
+                        # Pobierz statystyki głosowań, jeśli wymagane
                         if download_voting_stats:
                             stats_path = self._download_mp_voting_stats(term, mp_id, mp_dir)
                             if stats_path:
@@ -352,7 +377,8 @@ class MPScraper:
         except Exception as e:
             logger.error(f"Błąd tworzenia raportu podsumowującego: {e}")
 
-    def _create_csv_export(self, mp_dir: Path, mps: List[Dict]):
+    @staticmethod
+    def _create_csv_export(mp_dir: Path, mps: List[Dict]):
         """Tworzy eksport CSV z podstawowymi danymi posłów"""
         try:
             import csv
@@ -377,12 +403,13 @@ class MPScraper:
         except Exception as e:
             logger.warning(f"Nie udało się utworzyć eksportu CSV: {e}")
 
-    def _make_safe_filename(self, name: str) -> str:
+    @staticmethod
+    def _make_safe_filename(name: str) -> str:
         """Czyści nazwę dla bezpiecznej nazwy pliku"""
         safe_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
         safe_name = ''.join(c if c in safe_chars else '_' for c in name)
 
-        # Skraca jeśli za długie
+        # Skraca, jeśli za długie
         if len(safe_name) > 50:
             safe_name = safe_name[:50]
 
@@ -400,7 +427,7 @@ class MPScraper:
             download_voting_stats: czy pobrać statystyki głosowań
 
         Returns:
-            True jeśli sukces
+            True, jeśli sukces
         """
         logger.info(f"Pobieranie danych posła ID {mp_id} z kadencji {term}")
 
