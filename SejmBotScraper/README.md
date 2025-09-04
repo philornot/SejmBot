@@ -42,28 +42,6 @@ SejmBot-scraper/
 └── .env.example         # Przykład konfiguracji środowiskowej
 ```
 
-## Instalacja
-
-1. **Sklonuj repozytorium**:
-
-```bash
-git clone https://github.com/philornot/SejmBot-scraper.git
-cd SejmBot-scraper
-```
-
-2. **Zainstaluj zależności**:
-
-```bash
-pip install -r requirements.txt
-```
-
-3. **Skonfiguruj środowisko** (opcjonalnie):
-
-```bash
-cp .env.example .env
-# Edytuj .env według potrzeb
-```
-
 ## Funkcje
 
 ### 📜 Stenogramy
