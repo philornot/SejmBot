@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Dict, List
 from unittest.mock import Mock, patch
 
+from wcwidth import wcswidth
+
 # ========================================================================
 # NAPRAWIONE IMPORTY - DODANIE ŚCIEŻEK DO SYS.PATH
 # ========================================================================
@@ -302,8 +304,8 @@ class HealthCheckReporter:
             'duration': duration
         })
 
+    # todo: jeszcze trooooszeczkę trzeba to wyrównać ale jest postęp
     def print_summary(self):
-        """Wyświetla podsumowanie wszystkich testów"""
         self.end_time = time.time()
         total_duration = self.end_time - self.start_time
 
@@ -311,7 +313,6 @@ class HealthCheckReporter:
         failed_count = len(self.test_results) - passed_count
         success_rate = (passed_count / len(self.test_results) * 100) if self.test_results else 0
 
-        # Określ overall status
         if failed_count == 0:
             status_text = "HEALTHY"
             status_color = TestColors.GREEN
@@ -325,43 +326,66 @@ class HealthCheckReporter:
             status_color = TestColors.RED
             overall_icon = "❌"
 
-        # TODO: napraw tą okropną ramkę
+        WIDTH = 67  # szerokość ramki bez znaków brzegowych
+
+        def pad_center(content):
+            """Centruje zawartość w ramce"""
+            content_width = wcswidth(content)
+            if content_width > WIDTH:
+                while wcswidth(content + "...") > WIDTH:
+                    content = content[:-1]
+                content += "..."
+                content_width = wcswidth(content)
+            total_padding = WIDTH - content_width
+            left = total_padding // 2
+            right = total_padding - left
+            return f"║{' ' * left}{content}{' ' * right}║"
+
+        def pad_left(content, indent=2):
+            """Wyrównuje do lewej w ramce"""
+            content_width = wcswidth(content)
+            if content_width > WIDTH - indent:
+                while wcswidth(content + "...") > WIDTH - indent:
+                    content = content[:-1]
+                content += "..."
+                content_width = wcswidth(content)
+            right = WIDTH - content_width - indent
+            return f"║{' ' * indent}{content}{' ' * right}║"
+
         lines = [
-            f"{TestColors.CYAN}╔═══════════════════════════════════════════════════════════════════╗",
-            f"║                        TEST EXECUTION SUMMARY                    ║",
-            f"╠═══════════════════════════════════════════════════════════════════╣",
-            f"║                                                                   ║",
-            f"║  {overall_icon} Overall Status: {status_color}{status_text}{TestColors.CYAN}" + " " * (
-                        41 - len(status_text)) + "║",
-            f"║                                                                   ║",
-            f"║  📊 Test Statistics:                                              ║",
-            f"║     • Total Tests: {len(self.test_results):>3}" + " " * 42 + "║",
-            f"║     • Passed:      {TestColors.GREEN}{passed_count:>3}{TestColors.CYAN}" + " " * 42 + "║",
-            f"║     • Failed:      {TestColors.RED}{failed_count:>3}{TestColors.CYAN}" + " " * 42 + "║",
-            f"║     • Success Rate: {success_rate:>5.1f}%" + " " * 36 + "║",
-            f"║                                                                   ║",
-            f"║  ⏱️  Execution Time: {total_duration:>6.2f}s" + " " * 36 + "║",
-            f"║                                                                   ║"
+            f"{TestColors.CYAN}╔{'═' * WIDTH}╗",
+            pad_center("TEST EXECUTION SUMMARY"),
+            f"╠{'═' * WIDTH}╣",
+            pad_center(""),
+            pad_center(f"{overall_icon} Overall Status: {status_color}{status_text}{TestColors.CYAN}"),
+            pad_center(""),
+            pad_left("📊 Test Statistics:"),
+            pad_left(f"• Total Tests: {len(self.test_results)}"),
+            pad_left(f"• Passed: {TestColors.GREEN}{passed_count}{TestColors.CYAN}"),
+            pad_left(f"• Failed: {TestColors.RED}{failed_count}{TestColors.CYAN}"),
+            pad_left(f"• Success Rate: {success_rate:.1f}%"),
+            pad_left(""),
+            pad_left(f"⏱️  Execution Time: {total_duration:.2f}s"),
+            pad_center(""),
         ]
 
-        # Dodaj failed tests jeśli są
         if failed_count > 0:
-            lines.append("║  ❌ Failed Tests:" + " " * 48 + "║")
+            lines.append(pad_left("❌ Failed Tests:"))
             for result in self.test_results:
                 if not result['passed']:
                     test_name = result['name']
-                    if len(test_name) > 50:
-                        test_name = test_name[:47] + "..."
-                    lines.append(f"║     • {test_name:<50} ║")
-            lines.append("║" + " " * 67 + "║")
+                    if wcswidth(test_name) > WIDTH - 6:
+                        while wcswidth(test_name + "...") > WIDTH - 6:
+                            test_name = test_name[:-1]
+                        test_name += "..."
+                    lines.append(pad_left(f"• {test_name}"))
+            lines.append(pad_left(""))
 
-        lines.append(f"╚═══════════════════════════════════════════════════════════════════╝{TestColors.RESET}")
+        lines.append(f"╚{'═' * WIDTH}╝{TestColors.RESET}")
 
-        # Wydrukuj wszystko
         for line in lines:
             print(line)
 
-        # Rekomendacje
         if failed_count > 0:
             print(f"\n{TestColors.YELLOW}📋 REKOMENDACJE:{TestColors.RESET}")
             if failed_count > 5:
