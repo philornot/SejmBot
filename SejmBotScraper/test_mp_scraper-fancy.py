@@ -4,11 +4,7 @@
 🧪 SejmBot MP Scraper - Professional Test Suite
 ==============================================
 
-Profesjonalny health check i test suite dla modułu MPScraper.
-Zaprojektowany jak enterprise monitoring system.
-
-Autor: SejmBot Team
-Wersja: 2.0.2 - Fixed and Stable
+Health check i test suite dla modułu MPScraper.
 """
 
 import json
