@@ -492,7 +492,7 @@ class MPScraper:
         """
         try:
             mps = self.api._make_request(f"/sejm/term{term}/MP")
-            if not mps:
+            if mps is None:  # Sprawdzaj explicite None
                 return None
 
             clubs = {}
