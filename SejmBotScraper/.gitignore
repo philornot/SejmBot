@@ -2,6 +2,7 @@
 #  Sejmbot
 # =========
 stenogramy_sejm
+data_sejm
 logs
 scheduler_state.json
 

@@ -157,41 +157,38 @@ python scheduler.py --once
 python scheduler.py --status
 ```
 
+### Tryby alternatywne
+
+- **`--mps-only`**: Tylko krok 1
+- **`--transcripts-only`**: Tylko krok 2
+- **`--no-enrich`**: Kroki 1-2, pomija 3-4
+- **`--enrich-only`**: Tylko kroki 3-4 (na istniejących danych)
+
 ## Struktura wyjściowa
 
 Program tworzy następującą strukturę folderów:
 
 ```
-stenogramy_sejm/
-└── kadencja_10/
-    ├── posiedzenie_001_2023-11-13/
-    │   ├── info_posiedzenia.json      # Metadane posiedzenia
-    │   ├── transkrypt_2023-11-13.pdf
-    │   ├── transkrypt_2023-11-14.pdf
-    │   └── wypowiedzi_2023-11-13/
-    │       ├── 001_Marszalek_Sejmu.html
-    │       ├── 002_Jan_Kowalski.html
-    │       └── ...
-    ├── posiedzenie_002_2023-11-20/
-    │   └── ...
-    └── poslowie/                      # NOWOŚĆ: Dane posłów
-        ├── lista_poslow.json          # Pełna lista posłów
-        ├── poslowie.csv               # Eksport CSV
-        ├── podsumowanie_poslow.json   # Raport z grupowaniem
-        ├── posel_001_Jan_Kowalski.json
-        ├── posel_002_Anna_Nowak.json
-        ├── zdjecia/
-        │   ├── posel_001.jpg          # Zdjęcia posłów
-        │   └── posel_002.png
-        ├── statystyki_glosowan/
-        │   ├── posel_001_statystyki.json
-        │   └── posel_002_statystyki.json
-        └── kluby/
-            ├── lista_klubow.json
-            ├── klub_01_Prawo_i_Sprawiedliwosc.json
-            ├── klub_02_Platforma_Obywatelska.json
-            ├── logo_01_Prawo_i_Sprawiedliwosc.png
-            └── logo_02_Platforma_Obywatelska.png
+data_sejm/
+├── stenogramy/           # Surowe stenogramy
+│   └── kadencja_10/
+│       ├── posiedzenie_001.statements.json
+│       └── posiedzenie_002.statements.json
+├── poslowie/             # Dane posłów
+│   ├── kadencja_10.mp_data.json
+│   └── kadencja_10_statystyki.json
+├── kluby/                # Kluby parlamentarne
+│   └── kadencja_10.club_data.json
+├── wzbogacone/          # Dane wzbogacone
+│   └── kadencja_10/
+│       ├── posiedzenie_001.enriched.json
+│       └── posiedzenie_002.enriched.json
+├── gotowe_zbiory/       # Finalne zbiory do analizy
+│   ├── kadencja_10_kompletny_zbior.dataset.json
+│   └── kadencja_10_statystyki.dataset.json
+├── zdjecia_poslow/      # Zdjęcia posłów
+│   └── kadencja_10/
+└── temp/                # Pliki tymczasowe
 ```
 
 ## Automatyzacja
@@ -216,29 +213,50 @@ SejmBot-scraper jest przygotowany do integracji z systemami automatyzacji:
 @reboot cd /path/to/SejmBot-scraper && python scheduler.py --continuous
 ```
 
-## Opcje konfiguracji
+## ⚙️ Konfiguracja
 
-Wszystkie opcje konfiguracyjne znajdują się w `config.py` i mogą być nadpisane przez plik `.env`:
+### Plik .env
 
-### Podstawowe ustawienia
+Skopiuj `.env.example` do `.env` i dostosuj wartości:
 
-- `DEFAULT_TERM`: Domyślna kadencja (10)
-- `REQUEST_DELAY`: Opóźnienie między zapytaniami (1 sekunda)
-- `BASE_OUTPUT_DIR`: Katalog wyjściowy ("stenogramy_sejm")
-- `REQUEST_TIMEOUT`: Timeout dla zapytań (30 sekund)
+```bash
+cp .env.example .env
+```
 
-### Scheduler
+### Najważniejsze opcje
 
-- `SCHEDULER_INTERVAL`: Jak często sprawdzać nowe transkrypty (30 minut)
-- `MAX_PROCEEDING_AGE`: Jak stare posiedzenia sprawdzać (7 dni)
-- `ENABLE_NOTIFICATIONS`: Powiadomienia webhook (false)
-- `NOTIFICATION_WEBHOOK`: URL webhooka (Slack, Discord, Teams)
+```bash
+# Podstawowe
+DEFAULT_TERM=10
+BASE_OUTPUT_DIR=data_sejm
 
-### Logowanie
+# Wydajność
+CONCURRENT_DOWNLOADS=3
+REQUEST_DELAY=1.0
 
-- `LOG_LEVEL`: Poziom logowania (INFO, DEBUG, WARNING, ERROR)
-- `LOG_TO_FILE`: Zapisywanie logów do pliku (true)
-- `LOG_FILE_MAX_SIZE_MB`: Maksymalny rozmiar pliku logu (50MB)
+# Funkcje
+FETCH_FULL_TEXT=false
+DOWNLOAD_MP_PHOTOS=true
+ENABLE_ENRICHMENT=true
+```
+
+### Konfiguracje dla różnych scenariuszy
+
+#### Szybkie pobieranie
+```bash
+DOWNLOAD_MP_PHOTOS=false
+DOWNLOAD_MP_VOTING_STATS=false
+FETCH_FULL_TEXT=false
+CONCURRENT_DOWNLOADS=5
+```
+
+#### Pełne pobieranie
+```bash
+DOWNLOAD_MP_PHOTOS=true
+DOWNLOAD_MP_VOTING_STATS=true
+FETCH_FULL_TEXT=true
+SAVE_RAW_HTML=true
+```
 
 ## API Sejmu RP
 
