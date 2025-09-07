@@ -1,9 +1,10 @@
-# !/usr/bin/env python3
+#!/usr/bin/env python3
 # main.py
 """
-SejmBotScraper - Narzędzie do pobierania stenogramów z Sejmu RP
+SejmBotScraper - Narzędzie do pobierania i przetwarzania danych z Sejmu RP
 
-Główny plik uruchamiający program do pobierania stenogramów
+Główny plik uruchamiający program do pobierania stenogramów,
+danych posłów i tworzenia gotowych do analizy zbiorów danych
 z API Sejmu Rzeczypospolitej Polskiej.
 """
 
@@ -13,6 +14,7 @@ import sys
 from pathlib import Path
 
 from config import LOG_LEVEL, LOG_FORMAT, LOGS_DIR, DEFAULT_TERM
+from mp_scraper import MPScraper
 from scraper import SejmScraper
 
 
@@ -54,7 +56,6 @@ def setup_logging(verbose: bool = False, log_file: str = None):
             file_handler.setFormatter(file_formatter)
             handlers.append(file_handler)
 
-            # Informuj użytkownika o lokalizacji pliku
             print(f"Logi będą zapisywane do: {log_file_path.absolute()}")
 
         except Exception as e:
@@ -71,101 +72,393 @@ def print_banner():
     """Wyświetla banner aplikacji"""
     banner = """
 ╔══════════════════════════════════════════════════════════════╗
-║                        SejmBotScraper                        ║
+║                     SejmBotScraper v2.0                      ║
 ║                                                              ║
-║          Narzędzie do pobierania stenogramów Sejmu RP        ║
-║                         Wersja 1.0.1                         ║
+║     Kompleksowe narzędzie do pobierania danych Sejmu RP      ║
+║         • Stenogramy i wypowiedzi                            ║
+║         • Dane posłów i klubów                               ║
+║         • Gotowe zbiory do analizy                           ║
 ╚══════════════════════════════════════════════════════════════╝
     """
     print(banner)
 
 
-def main():
-    """Główna funkcja programu"""
+def print_workflow_info():
+    """Wyświetla informacje o domyślnym workflow"""
+    info = """
+🔄 DOMYŚLNY WORKFLOW:
+1. 👥 Pobieranie danych posłów i klubów
+2. 📄 Pobieranie stenogramów i wypowiedzi
+3. 🔗 Wzbogacanie wypowiedzi o dane posłów
+4. 💾 Generowanie gotowych zbiorów JSON
+"""
+    print(info)
+
+
+def create_parser():
+    """Tworzy parser argumentów CLI"""
     parser = argparse.ArgumentParser(
-        description="SejmBotScraper - pobiera stenogramy z API Sejmu RP",
+        description="SejmBotScraper - kompleksowe pobieranie danych Sejmu RP",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Przykłady użycia:
-  %(prog)s                              # pobierz całą 10. kadencję (tylko PDF)
-  %(prog)s -t 9                         # pobierz 9. kadencję
-  %(prog)s -t 10 -p 15                  # pobierz posiedzenie 15 z 10. kadencji
-  %(prog)s -t 10 --statements           # pobierz także wypowiedzi HTML
-  %(prog)s --list-terms                 # wyświetl dostępne kadencje
-  %(prog)s -t 10 --summary              # wyświetl podsumowanie posiedzeń
-  %(prog)s -v --log-file scraper.log    # verbose z zapisem do pliku
+PRZYKŁADY UŻYCIA:
+
+Podstawowe:
+  %(prog)s                                    # pełny workflow dla kadencji 10
+  %(prog)s -t 9                               # pełny workflow dla kadencji 9
+  %(prog)s -t 10 -p 15                        # tylko posiedzenie 15
+
+Selektywne pobieranie:
+  %(prog)s --mps-only                         # tylko dane posłów
+  %(prog)s --transcripts-only                 # tylko stenogramy
+  %(prog)s --transcripts-only --full-text     # stenogramy z pełnym tekstem
+  %(prog)s --no-enrich                        # bez wzbogacania o dane posłów
+
+Informacyjne:
+  %(prog)s --list-terms                       # lista kadencji
+  %(prog)s --summary                          # podsumowanie posiedzeń
+  %(prog)s --mp-summary                       # podsumowanie posłów
+
+Zaawansowane:
+  %(prog)s --skip-existing                    # pomiń istniejące pliki
+  %(prog)s --enrich-existing                  # wzbogać istniejące dane
+  %(prog)s -v --log-file scraper.log          # verbose z logiem
         """
     )
 
-    # Główne opcje
-    parser.add_argument(
+    # === GŁÓWNE OPCJE ===
+    main_group = parser.add_argument_group('Główne opcje')
+
+    main_group.add_argument(
         '-t', '--term',
         type=int,
         default=DEFAULT_TERM,
-        help=f'Numer kadencji do pobrania (domyślnie: {DEFAULT_TERM})'
+        help=f'Numer kadencji (domyślnie: {DEFAULT_TERM})'
     )
 
-    parser.add_argument(
+    main_group.add_argument(
         '-p', '--proceeding',
         type=int,
-        help='Numer konkretnego posiedzenia do pobrania (opcjonalne)'
+        help='Numer konkretnego posiedzenia'
     )
 
-    # Opcje pobierania
-    parser.add_argument(
-        '--no-pdfs',
+    # === TRYBY PRACY ===
+    mode_group = parser.add_argument_group('Tryby pracy (wykluczają się)')
+    mode_exclusive = mode_group.add_mutually_exclusive_group()
+
+    mode_exclusive.add_argument(
+        '--mps-only',
         action='store_true',
-        help='Nie pobieraj plików PDF (domyślnie pobierane)'
+        help='Pobierz tylko dane posłów i klubów'
     )
 
-    parser.add_argument(
-        '--statements',
+    mode_exclusive.add_argument(
+        '--transcripts-only',
         action='store_true',
-        help='Pobierz także poszczególne wypowiedzi w HTML (domyślnie nie)'
+        help='Pobierz tylko stenogramy i wypowiedzi'
     )
 
-    # Opcje informacyjne
-    parser.add_argument(
+    mode_exclusive.add_argument(
+        '--enrich-only',
+        action='store_true',
+        help='Tylko wzbogacanie istniejących danych'
+    )
+
+    # === OPCJE POBIERANIA POSŁÓW ===
+    mp_group = parser.add_argument_group('Opcje danych posłów')
+
+    mp_group.add_argument(
+        '--no-mp-photos',
+        action='store_true',
+        help='Nie pobieraj zdjęć posłów'
+    )
+
+    mp_group.add_argument(
+        '--no-mp-stats',
+        action='store_true',
+        help='Nie pobieraj statystyk głosowań posłów'
+    )
+
+    mp_group.add_argument(
+        '--mp-id',
+        type=int,
+        help='Pobierz tylko konkretnego posła (ID)'
+    )
+
+    # === OPCJE POBIERANIA STENOGRAMÓW ===
+    transcript_group = parser.add_argument_group('Opcje stenogramów')
+
+    transcript_group.add_argument(
+        '--full-text',
+        action='store_true',
+        help='Pobierz pełne teksty wypowiedzi (nie tylko metadane)'
+    )
+
+    transcript_group.add_argument(
+        '--skip-statements',
+        action='store_true',
+        help='Nie pobieraj indywidualnych wypowiedzi'
+    )
+
+    # === OPCJE WZBOGACANIA ===
+    enrich_group = parser.add_argument_group('Opcje wzbogacania danych')
+
+    enrich_group.add_argument(
+        '--no-enrich',
+        action='store_true',
+        help='Nie wzbogacaj wypowiedzi o dane posłów'
+    )
+
+    enrich_group.add_argument(
+        '--enrich-existing',
+        action='store_true',
+        help='Wzbogać istniejące dane (bez ponownego pobierania)'
+    )
+
+    enrich_group.add_argument(
+        '--skip-existing',
+        action='store_true',
+        help='Pomiń istniejące pliki podczas pobierania'
+    )
+
+    # === OPCJE INFORMACYJNE ===
+    info_group = parser.add_argument_group('Opcje informacyjne')
+
+    info_group.add_argument(
         '--list-terms',
         action='store_true',
-        help='Wyświetl listę dostępnych kadencji i zakończ'
+        help='Wyświetl dostępne kadencje'
     )
 
-    parser.add_argument(
+    info_group.add_argument(
         '--summary',
         action='store_true',
-        help='Wyświetl podsumowanie posiedzeń dla danej kadencji'
+        help='Podsumowanie posiedzeń dla kadencji'
     )
 
-    # Opcje logowania
-    parser.add_argument(
+    info_group.add_argument(
+        '--mp-summary',
+        action='store_true',
+        help='Podsumowanie posłów dla kadencji'
+    )
+
+    # === OPCJE LOGOWANIA ===
+    log_group = parser.add_argument_group('Opcje logowania')
+
+    log_group.add_argument(
         '-v', '--verbose',
         action='store_true',
         help='Szczegółowe logi (DEBUG level)'
     )
 
-    parser.add_argument(
+    log_group.add_argument(
         '--log-file',
         type=str,
         help='Zapisuj logi do pliku (w katalogu logs/)'
     )
 
-    args = parser.parse_args()
+    return parser
 
-    # Konfiguruj logowanie przed jakąkolwiek operacją
-    setup_logging(args.verbose, args.log_file)
 
-    # Wyświetl banner
-    if not args.list_terms and not args.summary:
-        print_banner()
+def validate_args(args):
+    """Waliduje argumenty CLI"""
+    issues = []
 
-    # Utwórz scraper
-    scraper = SejmScraper()
+    # Walidacja numerów
+    if args.term <= 0:
+        issues.append(f"Numer kadencji musi być większy niż 0 (podano: {args.term})")
+
+    if args.proceeding is not None and args.proceeding <= 0:
+        issues.append(f"Numer posiedzenia musi być większy niż 0 (podano: {args.proceeding})")
+
+    if args.mp_id is not None and args.mp_id <= 0:
+        issues.append(f"ID posła musi być większe niż 0 (podano: {args.mp_id})")
+
+    # Logika trybów
+    if args.mp_id and not args.mps_only:
+        issues.append("Opcja --mp-id wymaga trybu --mps-only")
+
+    if args.enrich_existing and args.no_enrich:
+        issues.append("--enrich-existing i --no-enrich wykluczają się")
+
+    if args.full_text and args.skip_statements:
+        issues.append("--full-text i --skip-statements wykluczają się")
+
+    return issues
+
+
+def run_mps_workflow(args, mp_scraper):
+    """Uruchamia workflow pobierania danych posłów"""
+    print("👥 POBIERANIE DANYCH POSŁÓW I KLUBÓW")
+    print("=" * 60)
+
+    download_photos = not args.no_mp_photos
+    download_stats = not args.no_mp_stats
+
+    if args.mp_id:
+        # Konkretny poseł
+        success = mp_scraper.scrape_specific_mp(
+            args.term,
+            args.mp_id,
+            download_photos,
+            download_stats
+        )
+
+        if success:
+            print(f"✅ Pobrano dane posła ID {args.mp_id}")
+            return {'mps_downloaded': 1, 'clubs_downloaded': 0, 'errors': 0}
+        else:
+            print(f"❌ Błąd pobierania posła ID {args.mp_id}")
+            return {'mps_downloaded': 0, 'clubs_downloaded': 0, 'errors': 1}
+    else:
+        # Pełne pobieranie
+        stats = mp_scraper.scrape_complete_term_data(args.term)
+
+        print(f"Pobrani posłowie:    {stats['mps_downloaded']}")
+        print(f"Pobrane kluby:       {stats['clubs_downloaded']}")
+        print(f"Pobrane zdjęcia:     {stats['photos_downloaded']}")
+        print(f"Pobrane statystyki:  {stats['voting_stats_downloaded']}")
+        print(f"Błędy:               {stats['errors']}")
+
+        return stats
+
+
+def run_transcripts_workflow(args, sejm_scraper):
+    """Uruchamia workflow pobierania stenogramów"""
+    print("📄 POBIERANIE STENOGRAMÓW I WYPOWIEDZI")
+    print("=" * 60)
+
+    download_statements = not args.skip_statements
+
+    if args.proceeding:
+        # Konkretne posiedzenie
+        success = sejm_scraper.scrape_specific_proceeding(
+            args.term,
+            args.proceeding,
+            download_statements,
+            args.full_text
+        )
+
+        if success:
+            print(f"✅ Pobrano posiedzenie {args.proceeding}")
+            return {'proceedings_processed': 1, 'errors': 0}
+        else:
+            print(f"❌ Błąd pobierania posiedzenia {args.proceeding}")
+            return {'proceedings_processed': 0, 'errors': 1}
+    else:
+        # Pełna kadencja
+        stats = sejm_scraper.scrape_term(
+            args.term,
+            download_statements,
+            args.full_text,
+            skip_existing=args.skip_existing
+        )
+
+        print(f"Przetworzone posiedzenia: {stats['proceedings_processed']}")
+        print(f"Pominięte przyszłe:       {stats.get('future_proceedings_skipped', 0)}")
+        print(f"Zapisane wypowiedzi:      {stats['statements_saved']}")
+        print(f"Błędy:                    {stats['errors']}")
+
+        return stats
+
+
+def run_enrichment_workflow(args, sejm_scraper, mp_scraper):
+    """Uruchamia workflow wzbogacania danych"""
+    print("🔗 WZBOGACANIE WYPOWIEDZI O DANE POSŁÓW")
+    print("=" * 60)
 
     try:
-        # Lista kadencji
+        # Implementacja wzbogacania - to będzie dodane w scraper.py
+        stats = sejm_scraper.enrich_statements_with_mp_data(
+            args.term,
+            proceeding=args.proceeding
+        )
+
+        print(f"Wzbogacone wypowiedzi:  {stats['enriched_statements']}")
+        print(f"Utworzone zbiory JSON:  {stats['json_files_created']}")
+        print(f"Błędy:                  {stats['errors']}")
+
+        return stats
+    except AttributeError:
+        print("⚠️  Funkcja wzbogacania nie jest jeszcze zaimplementowana")
+        return {'enriched_statements': 0, 'json_files_created': 0, 'errors': 0}
+
+
+def run_full_workflow(args, sejm_scraper, mp_scraper):
+    """Uruchamia pełny workflow"""
+    print("🎯 PEŁNY WORKFLOW - KOMPLETNE POBIERANIE I PRZETWARZANIE")
+    print("=" * 70)
+
+    total_stats = {
+        'mps_downloaded': 0,
+        'clubs_downloaded': 0,
+        'photos_downloaded': 0,
+        'voting_stats_downloaded': 0,
+        'proceedings_processed': 0,
+        'statements_saved': 0,
+        'enriched_statements': 0,
+        'json_files_created': 0,
+        'errors': 0
+    }
+
+    # Krok 1: Posłowie (jeśli nie --transcripts-only)
+    print("\n" + "=" * 20 + " KROK 1: DANE POSŁÓW " + "=" * 20)
+    mp_stats = run_mps_workflow(args, mp_scraper)
+
+    for key in ['mps_downloaded', 'clubs_downloaded', 'photos_downloaded', 'voting_stats_downloaded', 'errors']:
+        if key in mp_stats:
+            total_stats[key] += mp_stats[key]
+
+    # Krok 2: Stenogramy
+    print("\n" + "=" * 18 + " KROK 2: STENOGRAMY " + "=" * 18)
+    transcript_stats = run_transcripts_workflow(args, sejm_scraper)
+
+    for key in ['proceedings_processed', 'statements_saved', 'errors']:
+        if key in transcript_stats:
+            total_stats[key] += transcript_stats[key]
+
+    # Krok 3: Wzbogacanie (jeśli nie --no-enrich)
+    if not args.no_enrich:
+        print("\n" + "=" * 18 + " KROK 3: WZBOGACANIE " + "=" * 18)
+        enrich_stats = run_enrichment_workflow(args, sejm_scraper, mp_scraper)
+
+        for key in ['enriched_statements', 'json_files_created', 'errors']:
+            if key in enrich_stats:
+                total_stats[key] += enrich_stats[key]
+
+    return total_stats
+
+
+def main():
+    """Główna funkcja programu"""
+    parser = create_parser()
+    args = parser.parse_args()
+
+    # Walidacja argumentów
+    issues = validate_args(args)
+    if issues:
+        print("❌ BŁĘDY ARGUMENTÓW:")
+        for issue in issues:
+            print(f"   • {issue}")
+        sys.exit(1)
+
+    # Konfiguruj logowanie
+    setup_logging(args.verbose, args.log_file)
+
+    # Wyświetl banner dla głównych operacji
+    if not any([args.list_terms, args.summary, args.mp_summary]):
+        print_banner()
+        if not any([args.mps_only, args.transcripts_only, args.enrich_only]):
+            print_workflow_info()
+
+    # Utwórz scrapery
+    sejm_scraper = SejmScraper()
+    mp_scraper = MPScraper()
+
+    try:
+        # === OPCJE INFORMACYJNE ===
         if args.list_terms:
-            terms = scraper.get_available_terms()
+            terms = sejm_scraper.get_available_terms()
             if terms:
                 print("Dostępne kadencje Sejmu RP:")
                 print("-" * 50)
@@ -176,9 +469,8 @@ Przykłady użycia:
                 print("Nie można pobrać listy kadencji.")
             return
 
-        # Podsumowanie posiedzeń
         if args.summary:
-            summary = scraper.get_term_proceedings_summary(args.term)
+            summary = sejm_scraper.get_term_proceedings_summary(args.term)
             if summary:
                 print(f"Posiedzenia kadencji {args.term}:")
                 print("-" * 60)
@@ -194,49 +486,62 @@ Przykłady użycia:
                 print(f"Nie można pobrać informacji o posiedzeniach kadencji {args.term}.")
             return
 
-        # Walidacja parametrów przed głównym procesem
-        if args.proceeding is not None and args.proceeding <= 0:
-            print(f"Błąd: Numer posiedzenia musi być większy niż 0 (podano: {args.proceeding})")
-            sys.exit(1)
+        if args.mp_summary:
+            summary = mp_scraper.get_mps_summary(args.term)
+            if summary:
+                print(f"Podsumowanie posłów kadencji {summary['term']}:")
+                print("-" * 60)
+                print(f"Łączna liczba posłów: {summary['total_mps']}")
+                print(f"Liczba klubów: {summary['clubs_count']}")
+                print("\nPosłowie według klubów:")
 
-        # Główny proces scrapowania
-        logging.info("Rozpoczynanie procesu pobierania stenogramów...")
-
-        download_pdfs = not args.no_pdfs
-        download_statements = args.statements
-
-        if args.proceeding:
-            # Pobierz konkretne posiedzenie
-            success = scraper.scrape_specific_proceeding(
-                args.term,
-                args.proceeding,
-                download_pdfs,
-                download_statements
-            )
-
-            if success:
-                print(f"\n✅ Pomyślnie pobrano posiedzenie {args.proceeding} z kadencji {args.term}")
+                for club, count in sorted(summary['clubs'].items(),
+                                          key=lambda x: x[1], reverse=True):
+                    print(f"  {club}: {count} posłów")
             else:
-                print(f"\n❌ Błąd podczas pobierania posiedzenia {args.proceeding}")
-                sys.exit(1)
+                print(f"Nie można pobrać informacji o posłach kadencji {args.term}.")
+            return
+
+        # === GŁÓWNY PROCES ===
+        logging.info("Rozpoczynanie procesu pobierania danych...")
+
+        # Wybór workflow
+        if args.mps_only:
+            stats = run_mps_workflow(args, mp_scraper)
+        elif args.transcripts_only:
+            stats = run_transcripts_workflow(args, sejm_scraper)
+        elif args.enrich_only or args.enrich_existing:
+            stats = run_enrichment_workflow(args, sejm_scraper, mp_scraper)
         else:
-            # Pobierz całą kadencję
-            stats = scraper.scrape_term(args.term, download_pdfs, download_statements)
+            # Pełny workflow
+            stats = run_full_workflow(args, sejm_scraper, mp_scraper)
 
-            print(f"\n📊 PODSUMOWANIE POBIERANIA KADENCJI {args.term}")
-            print("=" * 50)
-            print(f"Przetworzone posiedzenia: {stats['proceedings_processed']}")
-            print(f"Pominięte przyszłe posiedzenia: {stats.get('future_proceedings_skipped', 0)}")
-            print(f"Pobrane PDF-y:           {stats['pdfs_downloaded']}")
-            print(f"Zapisane wypowiedzi:     {stats['statements_saved']}")
-            print(f"Błędy:                   {stats['errors']}")
-            print("=" * 50)
+        # Podsumowanie końcowe
+        print(f"\n📊 PODSUMOWANIE KOŃCOWE - KADENCJA {args.term}")
+        print("=" * 70)
 
-            if stats['errors'] > 0:
-                print(f"⚠️  Proces zakończony z {stats['errors']} błędami. Sprawdź logi.")
-                sys.exit(1)
-            else:
-                print("✅ Proces zakończony pomyślnie!")
+        if not args.transcripts_only and not args.enrich_only:
+            print(f"Pobrani posłowie:       {stats.get('mps_downloaded', 0)}")
+            print(f"Pobrane kluby:          {stats.get('clubs_downloaded', 0)}")
+            print(f"Pobrane zdjęcia:        {stats.get('photos_downloaded', 0)}")
+            print(f"Pobrane statystyki:     {stats.get('voting_stats_downloaded', 0)}")
+
+        if not args.mps_only:
+            print(f"Przetworzone posiedzenia: {stats.get('proceedings_processed', 0)}")
+            print(f"Zapisane wypowiedzi:      {stats.get('statements_saved', 0)}")
+
+        if not args.no_enrich and not args.mps_only and not args.transcripts_only:
+            print(f"Wzbogacone wypowiedzi:    {stats.get('enriched_statements', 0)}")
+            print(f"Utworzone zbiory JSON:    {stats.get('json_files_created', 0)}")
+
+        print(f"Łączne błędy:             {stats.get('errors', 0)}")
+        print("=" * 70)
+
+        if stats.get('errors', 0) > 0:
+            print(f"⚠️  Proces zakończony z {stats['errors']} błędami. Sprawdź logi.")
+            sys.exit(1)
+        else:
+            print("✅ Proces zakończony pomyślnie!")
 
     except KeyboardInterrupt:
         logging.info("Proces przerwany przez użytkownika (Ctrl+C)")

@@ -4,7 +4,7 @@
 Automatyczny scheduler do pobierania najnowszych transkryptów Sejmu RP
 
 Ten moduł monitoruje API Sejmu i automatycznie pobiera nowe transkrypty
-gdy tylko staną się dostępne.
+gdy tylko staną się dostępne. Zmodyfikowany dla nowego workflow bez PDFów.
 """
 
 import argparse
@@ -238,14 +238,14 @@ class SejmScheduler:
 
             # Raportuj wyniki
             if new_downloads > 0:
-                self.logger.info(f"✅ Pobrano {new_downloads} nowych transkryptów")
+                self.logger.info(f"Pobrano {new_downloads} nowych transkryptów")
 
-                # Wysłij powiadomienie
+                # Wyślij powiadomienie
                 if new_proceedings:
                     message = self._create_notification_message(new_downloads, new_proceedings)
                     self._send_notification(message)
             else:
-                self.logger.info("ℹ️  Brak nowych transkryptów do pobrania")
+                self.logger.info("Brak nowych transkryptów do pobrania")
 
             # Zapisz stan
             self._save_state()
@@ -255,11 +255,12 @@ class SejmScheduler:
 
             # Powiadomienie o błędzie
             if self.config['enable_notifications']:
-                self._send_notification(f"❌ Błąd schedulera kadencji {self.term}: {e}")
+                self._send_notification(f"Błąd schedulera kadencji {self.term}: {e}")
 
     def _download_transcript_for_date(self, proceeding_id: int, date_str: str, proceeding: Dict) -> bool:
         """
         Pobiera transkrypt dla konkretnej daty z retry logic
+        Zmodyfikowany dla nowego workflow - tylko wypowiedzi
 
         Returns:
             True jeśli pobrano pomyślnie
@@ -277,49 +278,27 @@ class SejmScheduler:
                 if not detailed_info:
                     detailed_info = proceeding
 
-                # Zapisz informacje o posiedzeniu
+                # Zapisz informacje o posiedzeniu (jeśli jeszcze nie istnieją)
                 self.scraper.file_manager.save_proceeding_info(self.term, proceeding_id, detailed_info)
 
                 success = False
 
-                # Pobierz PDF transkrypt
-                try:
-                    pdf_content = self.api.get_transcript_pdf(self.term, proceeding_id, date_str)
-                    if pdf_content:
-                        saved_path = self.scraper.file_manager.save_pdf_transcript(
-                            self.term, proceeding_id, date_str, pdf_content, detailed_info
-                        )
-                        if saved_path:
-                            self.logger.info(f"✅ PDF zapisany: {saved_path}")
-                            success = True
-                        else:
-                            self.logger.warning(f"⚠️  Nie udało się zapisać PDF dla {date_str}")
-                    else:
-                        self.logger.info(f"ℹ️  Brak PDF dla {date_str} (może być jeszcze niedostępny)")
-
-                except Exception as e:
-                    if "404" not in str(e):
-                        # Sprawdź czy to błąd serwera (5xx)
-                        if any(status in str(e) for status in ["500", "502", "503", "504"]):
-                            raise  # Podnieś wyjątek żeby uruchomić retry
-                        else:
-                            self.logger.error(f"Błąd pobierania PDF dla {date_str}: {e}")
-                    else:
-                        self.logger.debug(f"PDF dla {date_str} jeszcze niedostępny (404)")
-
-                # Pobierz listę wypowiedzi
+                # Pobierz listę wypowiedzi - główny cel schedulera
                 try:
                     statements = self.api.get_transcripts_list(self.term, proceeding_id, date_str)
-                    if statements:
-                        saved_path = self.scraper.file_manager.save_html_statements(
-                            self.term, proceeding_id, date_str, statements, detailed_info
+                    if statements and statements.get('statements'):
+                        # Użyj nowego workflow do przetworzenia dnia posiedzenia
+                        self.scraper._process_proceeding_day(
+                            self.term,
+                            proceeding_id,
+                            date_str,
+                            detailed_info,
+                            fetch_full_statements=True  # Pobierz pełne treści wypowiedzi
                         )
-                        if saved_path:
-                            statement_count = len(statements.get('statements', []))
-                            self.logger.info(f"✅ Zapisano {statement_count} wypowiedzi do: {saved_path}")
-                            success = True
-                        else:
-                            self.logger.warning(f"⚠️  Nie udało się zapisać wypowiedzi dla {date_str}")
+
+                        statement_count = len(statements.get('statements', []))
+                        self.logger.info(f"Pomyślnie pobrano i zapisano {statement_count} wypowiedzi dla {date_str}")
+                        success = True
                     else:
                         self.logger.debug(f"Brak wypowiedzi dla {date_str}")
 
@@ -367,6 +346,8 @@ class SejmScheduler:
             return
 
         try:
+            import requests
+
             payload = {
                 "text": message,
                 "timestamp": datetime.now().isoformat(),
@@ -383,7 +364,7 @@ class SejmScheduler:
 
     def _create_notification_message(self, total_downloads: int, new_proceedings: List[Dict]) -> str:
         """Tworzy wiadomość powiadomienia"""
-        message = f"🏛️ Nowe stenogramy z Sejmu RP (kadencja {self.term})\n\n"
+        message = f"Nowe stenogramy z Sejmu RP (kadencja {self.term})\n\n"
         message += f"Pobrano łącznie: {total_downloads} transkryptów\n"
 
         for proc in new_proceedings:
@@ -425,7 +406,7 @@ class SejmScheduler:
 
             # Powiadomienie o krytycznym błędzie
             if self.config['enable_notifications']:
-                self._send_notification(f"💥 Krytyczny błąd schedulera kadencji {self.term}: {e}")
+                self._send_notification(f"Krytyczny błąd schedulera kadencji {self.term}: {e}")
 
     def run_once(self):
         """Uruchamia pojedyncze sprawdzenie"""
@@ -577,7 +558,7 @@ Przykłady użycia:
     try:
         if args.status:
             status = scheduler.get_status()
-            print(f"\n📊  STATUS SCHEDULERA KADENCJI {status['term']}")
+            print(f"\nSTATUS SCHEDULERA KADENCJI {status['term']}")
             print("=" * 50)
             print(f"Ostatnie sprawdzenie: {status['last_check'] or 'Nigdy'}")
             print(f"Przetworzone posiedzenia: {status['processed_proceedings']}")
@@ -585,28 +566,28 @@ Przykłady użycia:
             print(f"Plik stanu: {status['state_file']} {'✅' if status['state_file_exists'] else '❌'}")
 
         elif args.cleanup:
-            print("🧹 Czyszczenie starego stanu...")
+            print("Czyszczenie starego stanu...")
             scheduler.cleanup_old_state()
-            print("✅ Zakończono czyszczenie")
+            print("Zakończono czyszczenie")
 
         elif args.once:
-            print("🔍 Uruchamiam jednorazowe sprawdzenie...")
+            print("Uruchamiam jednorazowe sprawdzenie...")
             scheduler.run_once()
-            print("✅ Sprawdzenie zakończone")
+            print("Sprawdzenie zakończone")
 
         elif args.continuous:
             if args.interval < 1:
                 print("Błąd: Interwał musi być co najmniej 1 minuta")
                 sys.exit(1)
 
-            print(f"🔄 Uruchamiam scheduler w trybie ciągłym (co {args.interval} min)...")
+            print(f"Uruchamiam scheduler w trybie ciągłym (co {args.interval} min)...")
             print("Naciśnij Ctrl+C aby zatrzymać")
             scheduler.run_continuous(args.interval)
 
     except KeyboardInterrupt:
-        print("\n⏹️  Scheduler zatrzymany przez użytkownika")
+        print("\nScheduler zatrzymany przez użytkownika")
     except Exception as e:
-        print(f"\n❌ Nieoczekiwany błąd: {e}")
+        print(f"\nNieoczekiwany błąd: {e}")
         sys.exit(1)
 
 
