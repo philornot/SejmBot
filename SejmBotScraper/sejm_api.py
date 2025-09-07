@@ -21,12 +21,13 @@ class SejmAPI:
         self.base_url = API_BASE_URL
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': USER_AGENT
+            'User-Agent': USER_AGENT,
+            'Accept-Charset': 'utf-8'
         })
 
     def _make_request(self, endpoint: str) -> Optional[Any]:
         """
-        Wykonuje zapytanie do API z obsługą błędów
+        Wykonuje zapytanie do API z obsługą błędów i poprawnym kodowaniem
 
         Args:
             endpoint: Endpoint API (bez base URL)
@@ -42,6 +43,9 @@ class SejmAPI:
 
             response = self.session.get(url, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
+
+            # Upewniamy się o poprawnym kodowaniu
+            response.encoding = 'utf-8'
 
             # Sprawdź czy to JSON
             if 'application/json' in response.headers.get('content-type', ''):
@@ -79,18 +83,7 @@ class SejmAPI:
 
     def get_transcripts_list(self, term: int, proceeding_id: int, date: str) -> Optional[Dict]:
         """
-        Pobiera listę wypowiedzi z danego dnia posiedzenia
-
-        Args:
-            term: numer kadencji
-            proceeding_id: ID posiedzenia
-            date: data w formacie YYYY-MM-DD
-        """
-        return self._make_request(f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts")
-
-    def get_transcript_pdf(self, term: int, proceeding_id: int, date: str) -> Optional[bytes]:
-        """
-        Pobiera transkrypt całego dnia w formacie PDF
+        Pobiera listę wypowiedzi z danego dnia posiedzenia z rozszerzonymi metadanymi
 
         Args:
             term: numer kadencji
@@ -98,9 +91,23 @@ class SejmAPI:
             date: data w formacie YYYY-MM-DD
 
         Returns:
-            Zawartość PDF jako bytes lub None
+            Słownik z listą wypowiedzi zawierający metadane o mówcach:
+            - speakerName: imię i nazwisko mówcy
+            - speakerFunction: funkcja/stanowisko mówcy
+            - club: klub parlamentarny
+            - speakerId: ID mówcy (jeśli dostępne)
         """
-        return self._make_request(f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts/pdf")
+        endpoint = f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts"
+
+        # Próbujemy z parametrem rozszerzającym metadane
+        extended_endpoint = f"{endpoint}?format=extended"
+        result = self._make_request(extended_endpoint)
+
+        # Jeśli rozszerzona wersja nie działa, próbujemy standardową
+        if result is None:
+            result = self._make_request(endpoint)
+
+        return result
 
     def get_statement_html(self, term: int, proceeding_id: int, date: str, statement_num: int) -> Optional[str]:
         """
@@ -117,8 +124,81 @@ class SejmAPI:
         """
         content = self._make_request(f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts/{statement_num}")
         if isinstance(content, bytes):
-            return content.decode('utf-8')
+            return content.decode('utf-8', errors='replace')
         return content
+
+    def get_statement_full_text(self, term: int, proceeding_id: int, date: str, statement_num: int) -> Optional[str]:
+        """
+        Pobiera pełną treść konkretnej wypowiedzi w formacie tekstowym
+
+        Args:
+            term: numer kadencji
+            proceeding_id: ID posiedzenia
+            date: data w formacie YYYY-MM-DD
+            statement_num: numer wypowiedzi
+
+        Returns:
+            Pełna treść wypowiedzi jako string lub None
+        """
+        # Próbujemy endpoint z tekstem
+        text_content = self._make_request(
+            f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts/{statement_num}/text")
+
+        if text_content:
+            if isinstance(text_content, bytes):
+                return text_content.decode('utf-8', errors='replace')
+            elif isinstance(text_content, dict) and 'text' in text_content:
+                return text_content['text']
+            elif isinstance(text_content, str):
+                return text_content
+
+        # Jeśli dedykowany endpoint nie istnieje, pobieramy HTML i wyciągamy tekst
+        html_content = self.get_statement_html(term, proceeding_id, date, statement_num)
+        if html_content:
+            # Podstawowe usunięcie tagów HTML (można zastąpić BeautifulSoup jeśli potrzeba)
+            import re
+            text = re.sub(r'<[^>]+>', '', html_content)
+            text = re.sub(r'\s+', ' ', text).strip()
+            return text
+
+        return None
+
+    def get_speaker_info(self, term: int, speaker_id: Optional[int] = None, speaker_name: Optional[str] = None) -> \
+            Optional[Dict]:
+        """
+        Pobiera informacje o mówcy na podstawie ID lub nazwy
+
+        Args:
+            term: numer kadencji
+            speaker_id: ID mówcy (opcjonalne)
+            speaker_name: nazwa/imię i nazwisko mówcy (opcjonalne)
+
+        Returns:
+            Informacje o mówcy lub None
+        """
+        if speaker_id is not None:
+            # Próbujemy endpoint z ID mówcy
+            result = self._make_request(f"/sejm/term{term}/speakers/{speaker_id}")
+            if result:
+                return result
+
+        if speaker_name is not None:
+            # Próbujemy wyszukać po nazwie
+            encoded_name = requests.utils.quote(speaker_name.encode('utf-8'), safe='')
+            result = self._make_request(f"/sejm/term{term}/speakers?name={encoded_name}")
+            if result:
+                return result
+
+        # Jeśli dedykowane endpointy nie istnieją, sprawdzamy w liście posłów
+        if speaker_name is not None:
+            mps = self.get_mps(term)
+            if mps:
+                for mp in mps:
+                    mp_full_name = f"{mp.get('firstName', '')} {mp.get('lastName', '')}".strip()
+                    if speaker_name.lower() in mp_full_name.lower() or mp_full_name.lower() in speaker_name.lower():
+                        return self.get_mp_info(term, mp['id'])
+
+        return None
 
     # =============================================================================
     # POSŁOWIE
