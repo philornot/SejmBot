@@ -22,7 +22,6 @@ pod nosem, i jego dzień będzie o 🤏 lepszy dzięki mnie.
 3. **Analiza AI** najlepszych fragmentów (OpenAI/Claude API)
 4. **Selekcja i linkowanie** z nagraniami wideo z posiedzeń
 5. **Powiadomienia push** przez aplikację mobilną
-6. **Happiness++** użytkowników końcowych
 
 ## Obecny etap rozwoju
 
