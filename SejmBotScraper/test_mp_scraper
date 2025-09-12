@@ -22,7 +22,7 @@ from unittest.mock import Mock, patch
 from wcwidth import wcswidth
 
 # ========================================================================
-# NAPRAWIONE IMPORTY - DODANIE ŚCIEŻEK DO SYS.PATH
+# DODANIE ŚCIEŻEK DO SYS.PATH
 # ========================================================================
 
 # Dodaj katalog główny projektu do ścieżki
