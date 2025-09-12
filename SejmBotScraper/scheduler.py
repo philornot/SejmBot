@@ -33,7 +33,7 @@ class SejmScheduler:
         self._setup_logging()
 
         self.api = SejmAPI()
-        self.scraper = SejmScraper()
+        self.scraper = SejmScraper(force_refresh=False)  # Scheduler nigdy nie wymusza odświeżenia
         self.state_file = Path("scheduler_state.json")
         self.last_check = None
 
@@ -42,6 +42,9 @@ class SejmScheduler:
 
         # Stan schedulera
         self.state = self._load_state()
+
+        # Migruj stary stan do nowego cache managera (jednorazowo)
+        self._migrate_state_to_cache()
 
         self.logger.info(f"Zainicjalizowano scheduler dla kadencji {term}")
         self.logger.info(f"Konfiguracja: interval={self.config['check_interval_minutes']}min, "
@@ -78,7 +81,9 @@ class SejmScheduler:
             'processed_dates': {},  # {proceeding_id: [lista dat]}
             'last_check': None,
             'current_proceedings': [],  # aktualne posiedzenia
-            'term': self.term
+            'term': self.term,
+            'migrated_to_cache': False,  # flaga migracji do nowego cache
+            'migration_date': None
         }
 
     def _save_state(self):
@@ -90,6 +95,36 @@ class SejmScheduler:
             self.logger.debug("Zapisano stan schedulera")
         except Exception as e:
             self.logger.error(f"Błąd zapisywania stanu: {e}")
+
+    def _migrate_state_to_cache(self):
+        """
+        Migruje stary stan schedulera do nowego cache managera
+        Wykonuje się tylko raz przy pierwszym uruchomieniu z nowym systemem
+        """
+        if not self.state.get('processed_dates'):
+            return
+
+        if self.state.get('migrated_to_cache'):
+            return
+
+        self.logger.info("Migracja stanu schedulera do nowego cache managera...")
+
+        migrated_count = 0
+        for proc_id_str, dates in self.state['processed_dates'].items():
+            try:
+                proc_id = int(proc_id_str)
+                for date_str in dates:
+                    # Oznacz w cache jako przetworzone
+                    self.api.cache.mark_proceeding_checked(self.term, proc_id, f"migrated_{date_str}")
+                    migrated_count += 1
+            except (ValueError, TypeError):
+                continue
+
+        self.state['migrated_to_cache'] = True
+        self.state['migration_date'] = datetime.now().isoformat()
+        self._save_state()
+
+        self.logger.info(f"Zmigrowano {migrated_count} wpisów do nowego cache managera")
 
     def _get_current_proceedings(self) -> List[Dict]:
         """Pobiera listę aktualnych posiedzeń"""
@@ -147,6 +182,7 @@ class SejmScheduler:
     def _get_new_transcript_dates(self, proceeding_id: int, dates: List[str]) -> List[str]:
         """
         Zwraca listę dat dla których nie mamy jeszcze transkryptów
+        Zmodyfikowane żeby używać cache managera zamiast scheduler state
 
         Args:
             proceeding_id: ID posiedzenia
@@ -155,19 +191,21 @@ class SejmScheduler:
         Returns:
             Lista nowych dat do pobrania
         """
-        processed_dates = set(self.state['processed_dates'].get(str(proceeding_id), []))
         today = date.today()
-
         new_dates = []
+
         for date_str in dates:
             try:
                 proc_date = datetime.strptime(date_str, '%Y-%m-%d').date()
 
                 # Pobieraj tylko daty które:
-                # - nie zostały jeszcze przetworzone
                 # - są z przeszłości lub dzisiaj (transkrypty są dostępne po zakończeniu dnia)
-                if date_str not in processed_dates and proc_date <= today:
-                    new_dates.append(date_str)
+                if proc_date <= today:
+                    # Sprawdź w cache czy posiedzenie wymaga odświeżenia
+                    if self.api.cache.should_refresh_proceeding(
+                            self.term, proceeding_id, [date_str], force=False
+                    ):
+                        new_dates.append(date_str)
 
             except ValueError:
                 self.logger.warning(f"Nieprawidłowy format daty: {date_str}")
@@ -176,7 +214,12 @@ class SejmScheduler:
         return new_dates
 
     def _mark_date_processed(self, proceeding_id: int, date_str: str):
-        """Oznacza datę jako przetworzoną"""
+        """
+        Oznacza datę jako przetworzoną w cache managerze
+        """
+        self.api.cache.mark_proceeding_checked(self.term, proceeding_id, f"processed_{date_str}")
+
+        # Zachowaj również w starym systemie dla kompatybilności
         proc_id_str = str(proceeding_id)
         if proc_id_str not in self.state['processed_dates']:
             self.state['processed_dates'][proc_id_str] = []
@@ -186,11 +229,14 @@ class SejmScheduler:
             self.logger.debug(f"Oznaczono jako przetworzone: posiedzenie {proceeding_id}, data {date_str}")
 
     def check_for_new_transcripts(self):
-        """Główna metoda sprawdzająca nowe transkrypty"""
+        """Główna metoda sprawdzająca nowe transkrypty - zmodyfikowana z cache"""
         self.logger.info("=== SPRAWDZANIE NOWYCH TRANSKRYPTÓW ===")
 
         try:
-            # Pobierz listę posiedzeń
+            # Wyczyść stare wpisy z cache na początku
+            self.api.cache.cleanup_expired()
+
+            # Pobierz listę posiedzeń (z cache w SejmAPI)
             proceedings = self._get_current_proceedings()
             if not proceedings:
                 self.logger.warning("Brak posiedzeń do sprawdzenia")
@@ -211,7 +257,7 @@ class SejmScheduler:
 
                 self.logger.info(f"Sprawdzanie posiedzenia {proceeding_id}")
 
-                # Sprawdź które daty wymagają pobrania
+                # Sprawdź które daty wymagają pobrania (używa cache managera)
                 new_dates = self._get_new_transcript_dates(proceeding_id, dates)
 
                 if not new_dates:
@@ -415,11 +461,15 @@ class SejmScheduler:
 
     def cleanup_old_state(self, days_to_keep: int = 30):
         """
-        Czyści stary stan z dat starszych niż podana liczba dni
+        Czyści stary stan - zmodyfikowane żeby używać też cache managera
 
         Args:
             days_to_keep: ile dni wstecz zachować w stanie
         """
+        # Wyczyść cache manager
+        self.api.cache.cleanup_old_entries(days_to_keep)
+
+        # Wyczyść stary stan schedulera
         cutoff_date = date.today() - timedelta(days=days_to_keep)
 
         cleaned_count = 0
@@ -442,9 +492,15 @@ class SejmScheduler:
             self.logger.info(f"Usunięto {cleaned_count} starych wpisów ze stanu")
             self._save_state()
 
+    def clear_cache(self):
+        """Czyści cache schedulera"""
+        self.api.clear_cache("all")
+        self.logger.info("Wyczyszczono cache schedulera")
+
     def get_status(self) -> Dict:
-        """Zwraca status schedulera"""
+        """Zwraca status schedulera - wzbogacony o informacje z cache"""
         total_dates = sum(len(dates) for dates in self.state['processed_dates'].values())
+        cache_stats = self.api.get_cache_stats()
 
         return {
             'term': self.term,
@@ -452,11 +508,14 @@ class SejmScheduler:
             'processed_proceedings': len(self.state['processed_dates']),
             'total_processed_dates': total_dates,
             'state_file': str(self.state_file),
-            'state_file_exists': self.state_file.exists()
+            'state_file_exists': self.state_file.exists(),
+            'cache_stats': cache_stats,
+            'migrated_to_cache': self.state.get('migrated_to_cache', False),
+            'migration_date': self.state.get('migration_date')
         }
 
     def get_health_status(self) -> Dict:
-        """Zwraca status zdrowia schedulera"""
+        """Zwraca status zdrowia schedulera - wzbogacony o cache"""
         now = datetime.now()
         last_check = self.state.get('last_check')
 
@@ -476,6 +535,9 @@ class SejmScheduler:
 
         total_dates = sum(len(dates) for dates in self.state['processed_dates'].values())
 
+        # Dodaj informacje o cache
+        cache_stats = self.api.get_cache_stats()
+
         return {
             'status': health,
             'term': self.term,
@@ -487,6 +549,12 @@ class SejmScheduler:
                 'check_interval_minutes': self.config['check_interval_minutes'],
                 'max_proceeding_age_days': self.config['max_proceeding_age_days'],
                 'notifications_enabled': self.config['enable_notifications']
+            },
+            'cache_health': {
+                'api_entries': cache_stats['api_cache']['total_entries'],
+                'expired_entries': cache_stats['api_cache']['expired'],
+                'file_cache_entries': cache_stats['file_cache']['total_entries'],
+                'files_missing': cache_stats['file_cache']['files_missing'],
             }
         }
 
@@ -503,6 +571,8 @@ Przykłady użycia:
   %(prog)s --continuous --interval 15   # ciągły tryb co 15 min
   %(prog)s --status                     # pokaż status schedulera
   %(prog)s --cleanup                    # wyczyść stary stan
+  %(prog)s --clear-cache                # wyczyść cache
+  %(prog)s --cache-stats                # pokaż statystyki cache
         """
     )
 
@@ -544,11 +614,24 @@ Przykłady użycia:
         help='Wyczyść stary stan (starszy niż 30 dni)'
     )
 
+    parser.add_argument(
+        '--clear-cache',
+        action='store_true',
+        help='Wyczyść cache API i plików'
+    )
+
+    parser.add_argument(
+        '--cache-stats',
+        action='store_true',
+        help='Wyświetl statystyki cache'
+    )
+
     args = parser.parse_args()
 
     # Sprawdź czy podano jakąś akcję
-    if not any([args.once, args.continuous, args.status, args.cleanup]):
-        print("Błąd: Musisz podać jedną z akcji: --once, --continuous, --status, lub --cleanup")
+    if not any([args.once, args.continuous, args.status, args.cleanup, args.clear_cache, args.cache_stats]):
+        print(
+            "Błąd: Musisz podać jedną z akcji: --once, --continuous, --status, --cleanup, --clear-cache, lub --cache-stats")
         parser.print_help()
         sys.exit(1)
 
@@ -556,7 +639,28 @@ Przykłady użycia:
     scheduler = SejmScheduler(args.term)
 
     try:
-        if args.status:
+        if args.clear_cache:
+            print("Czyszczenie cache...")
+            scheduler.clear_cache()
+            print("Cache wyczyszczony")
+
+        elif args.cache_stats:
+            stats = scheduler.api.get_cache_stats()
+            print(f"\nSTATYSTYKI CACHE KADENCJI {args.term}")
+            print("=" * 50)
+            print(f"API Cache:")
+            print(f"  Łączne wpisy: {stats['api_cache']['total_entries']}")
+            print(f"  Wygasłe: {stats['api_cache']['expired']}")
+            print(f"  Stare (1h): {stats['api_cache']['stale_1h']}")
+            print(f"  Stare (24h): {stats['api_cache']['stale_24h']}")
+            print(f"\nFile Cache:")
+            print(f"  Łączne wpisy: {stats['file_cache']['total_entries']}")
+            print(f"  Pliki istniejące: {stats['file_cache']['files_exist']}")
+            print(f"  Brakujące pliki: {stats['file_cache']['files_missing']}")
+            print(f"\nUżycie dysku:")
+            print(f"  Rozmiar cache: {stats['disk_usage']['cache_dir_size_mb']:.2f} MB")
+
+        elif args.status:
             status = scheduler.get_status()
             print(f"\nSTATUS SCHEDULERA KADENCJI {status['term']}")
             print("=" * 50)
@@ -564,6 +668,16 @@ Przykłady użycia:
             print(f"Przetworzone posiedzenia: {status['processed_proceedings']}")
             print(f"Łączna liczba przetworzonych dat: {status['total_processed_dates']}")
             print(f"Plik stanu: {status['state_file']} {'✅' if status['state_file_exists'] else '❌'}")
+            print(f"Migracja do cache: {'✅' if status.get('migrated_to_cache') else '❌'}")
+
+            if status.get('migration_date'):
+                print(f"Data migracji: {status['migration_date']}")
+
+            # Dodaj statystyki cache
+            cache = status.get('cache_stats', {})
+            if cache:
+                print(f"\nCache API: {cache['api_cache']['total_entries']} wpisów")
+                print(f"Cache plików: {cache['file_cache']['total_entries']} wpisów")
 
         elif args.cleanup:
             print("Czyszczenie starego stanu...")
