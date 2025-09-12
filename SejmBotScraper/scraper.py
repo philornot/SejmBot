@@ -5,6 +5,7 @@ Główna logika scrapowania stenogramów Sejmu RP
 
 import logging
 from datetime import datetime, date
+from pathlib import Path
 from typing import List, Dict, Optional
 
 from config import DEFAULT_TERM
@@ -17,9 +18,10 @@ logger = logging.getLogger(__name__)
 class SejmScraper:
     """Główna klasa do scrapowania stenogramów Sejmu"""
 
-    def __init__(self):
+    def __init__(self, force_refresh: bool = False):
         self.api = SejmAPI()
         self.file_manager = FileManager()
+        self.force_refresh = force_refresh  # Dodana flaga wymuszania odświeżenia
         self.mp_data_cache = {}  # Cache dla danych posłów
         self.stats = {
             'proceedings_processed': 0,
@@ -28,7 +30,9 @@ class SejmScraper:
             'speakers_identified': 0,
             'mp_data_enrichments': 0,
             'errors': 0,
-            'future_proceedings_skipped': 0
+            'future_proceedings_skipped': 0,
+            'proceedings_skipped_cache': 0,  # Nowa statystyka
+            'transcripts_skipped_cache': 0  # Nowa statystyka
         }
 
     def _is_date_in_future(self, date_str: str) -> bool:
@@ -65,6 +69,39 @@ class SejmScraper:
         # Jeśli wszystkie daty są w przyszłości, pomiń
         future_dates = [d for d in proceeding_dates if self._is_date_in_future(d)]
         return len(future_dates) == len(proceeding_dates)
+
+    def _should_skip_existing_transcripts(self, term: int, proceeding_id: int,
+                                          date: str, proceeding_info: Dict) -> bool:
+        """
+        Sprawdza czy można pominąć pobieranie transkryptów dla danej daty
+        """
+        if self.force_refresh:
+            return False
+
+        # Sprawdź czy plik już istnieje
+        transcript_path = self._get_transcript_file_path(term, proceeding_id, date, proceeding_info)
+        if not self.api.cache.has_file_cache(transcript_path, check_content=True):
+            return False
+
+        # Sprawdź czy dane w pliku są kompletne
+        transcript_data = self.file_manager.load_transcript_file(str(transcript_path))
+        if not transcript_data:
+            return False
+
+        statements = transcript_data.get('statements', [])
+        if len(statements) == 0:
+            logger.debug(f"Plik {transcript_path} istnieje ale jest pusty - odświeżenie")
+            return False
+
+        logger.info(f"Pomijam istniejący transkrypt dla {date} ({len(statements)} wypowiedzi)")
+        self.stats['transcripts_skipped_cache'] += 1
+        return True
+
+    def _get_transcript_file_path(self, term: int, proceeding_id: int,
+                                  date: str, proceeding_info: Dict) -> Path:
+        """Pomocna metoda do uzyskania ścieżki pliku transkryptu"""
+        transcripts_dir = self.file_manager.get_transcripts_directory(term, proceeding_id, proceeding_info)
+        return transcripts_dir / f"transkrypty_{date}.json"
 
     def _load_mp_data(self, term: int) -> Dict:
         """
@@ -210,7 +247,7 @@ class SejmScraper:
             return None
 
     def _enrich_statements_with_full_content(self, statements: List[Dict], term: int, proceeding_id: int, date: str) -> \
-            List[Dict]:
+    List[Dict]:
         """
         Próbuje pobrać pełną treść dla wypowiedzi
 
@@ -248,20 +285,28 @@ class SejmScraper:
 
         return enriched_statements
 
-    def scrape_term(self, term: int = DEFAULT_TERM, fetch_full_statements: bool = True) -> Dict:
+    def scrape_term(self, term: int = DEFAULT_TERM, fetch_full_statements: bool = True,
+                    force_refresh: bool = False) -> Dict:
         """
         Scrapuje wszystkie stenogramy z danej kadencji
 
         Args:
             term: numer kadencji
             fetch_full_statements: czy pobierać pełną treść wypowiedzi
+            force_refresh: czy wymusić odświeżenie danych
 
         Returns:
             Statystyki procesu
         """
+        # Zaktualizuj flagę force_refresh
+        self.force_refresh = force_refresh
+
+        if force_refresh:
+            logger.info(f"WYMUSZONO ODŚWIEŻENIE - wszystkie dane zostaną pobrane ponownie")
+
         logger.info(f"Rozpoczynanie scrapowania kadencji {term}")
 
-        # Pobierz informacje o kadencji
+        # Pobierz informacje o kadencji (z cache w SejmAPI)
         term_info = self.api.get_term_info(term)
         if not term_info:
             logger.error(f"Nie można pobrać informacji o kadencji {term}")
@@ -398,7 +443,7 @@ class SejmScraper:
 
     def _process_proceeding(self, term: int, proceeding: Dict, fetch_full_statements: bool):
         """
-        Przetwarza jedno posiedzenie
+        Przetwarza jedno posiedzenie - zmodyfikowane z inteligentnym cache
 
         Args:
             term: numer kadencji
@@ -408,7 +453,17 @@ class SejmScraper:
         proceeding_number = proceeding.get('number')
         logger.info(f"Przetwarzanie posiedzenia {proceeding_number}")
 
-        # Pobierz szczegółowe informacje o posiedzeniu
+        # Sprawdź czy posiedzenie wymaga odświeżenia (inteligentna logika z cache_manager)
+        proceeding_dates = proceeding.get('dates', [])
+        if not self.force_refresh and hasattr(self.api, 'cache') and not self.api.cache.should_refresh_proceeding(
+                term, proceeding_number, proceeding_dates, force=False
+        ):
+            logger.info(f"Pomijam posiedzenie {proceeding_number} - nie wymaga odświeżenia")
+            self.api.cache.mark_proceeding_checked(term, proceeding_number, "skipped")
+            self.stats['proceedings_skipped_cache'] += 1
+            return
+
+        # Pobierz szczegółowe informacje o posiedzeniu (z cache w SejmAPI)
         detailed_info = self.api.get_proceeding_info(term, proceeding_number)
         if not detailed_info:
             logger.warning(f"Nie można pobrać szczegółów posiedzenia {proceeding_number}")
@@ -441,10 +496,14 @@ class SejmScraper:
         for date in past_dates:
             self._process_proceeding_day(term, proceeding_number, date, detailed_info, fetch_full_statements)
 
+        # Oznacz posiedzenie jako sprawdzone (jeśli cache jest dostępne)
+        if hasattr(self.api, 'cache'):
+            self.api.cache.mark_proceeding_checked(term, proceeding_number, "processed")
+
     def _process_proceeding_day(self, term: int, proceeding_id: int, date: str,
                                 proceeding_info: Dict, fetch_full_statements: bool):
         """
-        Przetwarza jeden dzień posiedzenia - pobiera i wzbogaca wypowiedzi
+        Przetwarza jeden dzień posiedzenia - zmodyfikowane z cache
 
         Args:
             term: numer kadencji
@@ -453,10 +512,14 @@ class SejmScraper:
             proceeding_info: informacje o posiedzeniu
             fetch_full_statements: czy pobierać pełną treść wypowiedzi
         """
+        # Sprawdź czy można pominąć
+        if self._should_skip_existing_transcripts(term, proceeding_id, date, proceeding_info):
+            return
+
         logger.info(f"Przetwarzanie dnia {date} posiedzenia {proceeding_id}")
 
         try:
-            # Pobierz listę wypowiedzi
+            # Pobierz listę wypowiedzi (z cache w SejmAPI)
             statements_data = self.api.get_transcripts_list(term, proceeding_id, date)
 
             if not statements_data or 'statements' not in statements_data:
@@ -521,6 +584,15 @@ class SejmScraper:
             )
 
             if saved_path:
+                # Zarejestruj plik w cache (jeśli dostępne)
+                if hasattr(self.api, 'cache'):
+                    self.api.cache.set_file_cache(Path(saved_path), {
+                        'term': term,
+                        'proceeding_id': proceeding_id,
+                        'date': date,
+                        'statements_count': len(enriched_statements)
+                    })
+
                 self.stats['statements_processed'] += len(enriched_statements)
                 logger.info(f"Zapisano {len(enriched_statements)} wzbogaconych wypowiedzi do: {saved_path}")
             else:
@@ -538,6 +610,8 @@ class SejmScraper:
         logger.info("=== STATYSTYKI KOŃCOWE ===")
         logger.info(f"Przetworzone posiedzenia: {self.stats['proceedings_processed']}")
         logger.info(f"Pominięte przyszłe posiedzenia: {self.stats['future_proceedings_skipped']}")
+        logger.info(f"Pominięte posiedzenia (cache): {self.stats['proceedings_skipped_cache']}")
+        logger.info(f"Pominięte transkrypty (cache): {self.stats['transcripts_skipped_cache']}")
         logger.info(f"Przetworzone wypowiedzi: {self.stats['statements_processed']}")
         logger.info(f"Wypowiedzi z pełną treścią: {self.stats['statements_with_full_content']}")
         logger.info(f"Zidentyfikowani mówcy: {self.stats['speakers_identified']}")
@@ -585,6 +659,30 @@ class SejmScraper:
             })
 
         return summary
+
+    # Nowe metody do zarządzania cache
+    def clear_cache(self, cache_type: str = "all"):
+        """Czyści cache scrapera"""
+        if hasattr(self.api, 'clear_cache'):
+            self.api.clear_cache(cache_type)
+        else:
+            logger.warning("Cache API nie jest dostępne")
+
+    def cleanup_cache(self):
+        """Czyści stare wpisy z cache"""
+        if hasattr(self.api, 'cache'):
+            self.api.cache.cleanup_expired()
+            self.api.cache.cleanup_old_entries()
+        else:
+            logger.warning("Cache manager nie jest dostępny")
+
+    def get_cache_stats(self) -> Dict:
+        """Zwraca statystyki cache"""
+        if hasattr(self.api, 'get_cache_stats'):
+            return self.api.get_cache_stats()
+        else:
+            logger.warning("Cache stats nie są dostępne")
+            return {}
 
     def clear_mp_cache(self):
         """Czyści cache danych posłów"""
