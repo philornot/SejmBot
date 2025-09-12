@@ -44,17 +44,40 @@ class SejmAPI:
 
         try:
             logger.debug(f"Zapytanie do: {url}")
-            time.sleep(REQUEST_DELAY)  # Gentle rate limiting
+            time.sleep(REQUEST_DELAY)  # Łagodne rate limiting
 
             response = self.session.get(url, timeout=REQUEST_TIMEOUT)
+
+            # Sprawdź konkretne kody błędów
+            if response.status_code == 403:
+                logger.debug(f"403 Forbidden dla {url} - endpoint może nie istnieć")
+                return None
+            elif response.status_code == 404:
+                logger.debug(f"404 Not Found dla {url} - zasób nie istnieje")
+                return None
+            elif response.status_code == 429:
+                logger.warning(f"429 Too Many Requests dla {url}")
+                time.sleep(5)
+                return None
+
             response.raise_for_status()
 
             # Upewniamy się o poprawnym kodowaniu
             response.encoding = 'utf-8'
 
-            # Sprawdź czy to JSON
-            if 'application/json' in response.headers.get('content-type', ''):
-                return response.json()
+            # Sprawdź, czy to JSON
+            content_type = response.headers.get('content-type', '')
+            if 'application/json' in content_type:
+                try:
+                    json_data = response.json()
+                    # API Sejmu zwraca {"supportID": "..."} dla nieobsługiwanych endpointów
+                    if isinstance(json_data, dict) and 'supportID' in json_data and len(json_data) == 1:
+                        logger.debug(f"API zwróciło tylko supportID dla {url} - nieobsługiwany endpoint")
+                        return None
+                    return json_data
+                except ValueError as e:
+                    logger.error(f"Błąd parsowania JSON z {url}: {e}")
+                    return None
             else:
                 return response.content
 
@@ -158,7 +181,7 @@ class SejmAPI:
 
     def get_transcripts_list(self, term: int, proceeding_id: int, date: str) -> Optional[Dict]:
         """
-        Pobiera listę wypowiedzi z danego dnia posiedzenia z cache'em i rozszerzonymi metadanymi
+        Pobiera listę wypowiedzi z danego dnia posiedzenia z cache'em
 
         Args:
             term: numer kadencji
@@ -178,23 +201,33 @@ class SejmAPI:
                 logger.debug(f"Użyto cache dla listy wypowiedzi {proceeding_id}/{date}")
                 return cached_data
 
-        # Próbujemy z parametrem rozszerzającym metadane
-        extended_endpoint = f"{endpoint}?format=extended"
-        result = self._make_request(extended_endpoint)
-
-        # Jeśli rozszerzona wersja nie działa, próbujemy standardową
-        if result is None:
+        # Pobieramy standardowym endpointem (BEZ format=extended)
+        try:
             result = self._make_request(endpoint)
 
-        # Zapisz do cache
-        if result:
-            self.cache.set_api_cache(endpoint, result, params, ttl_hours=1)
+            if result:
+                self.cache.set_api_cache(endpoint, result, params, ttl_hours=1)
 
-        return result
+                # Log success with proper count handling
+                if isinstance(result, list):
+                    logger.debug(f"Pobrano {len(result)} wypowiedzi dla {date}")
+                elif isinstance(result, dict) and 'transcripts' in result:
+                    transcript_count = len(result['transcripts'])
+                    logger.debug(f"Pobrano {transcript_count} wypowiedzi dla {date}")
+                else:
+                    logger.debug(f"Pobrano dane wypowiedzi dla {date}")
+            else:
+                logger.warning(f"Brak danych wypowiedzi dla {date}")
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Błąd pobierania wypowiedzi dla {date}: {e}")
+            return None
 
     def get_statement_html(self, term: int, proceeding_id: int, date: str, statement_num: int) -> Optional[str]:
         """
-        Pobiera konkretną wypowiedź w formacie HTML
+        Pobiera konkretną wypowiedź w formacie HTML z cache'em
 
         Args:
             term: numer kadencji
@@ -205,14 +238,40 @@ class SejmAPI:
         Returns:
             HTML jako string lub None
         """
-        content = self._make_request(f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts/{statement_num}")
-        if isinstance(content, bytes):
-            return content.decode('utf-8', errors='replace')
-        return content
+        endpoint = f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts/{statement_num}"
+        params = {"term": term, "proceeding": proceeding_id, "date": date, "statement": statement_num}
+
+        # Cache na 24 godziny dla konkretnych wypowiedzi (rzadko się zmieniają)
+        if self.cache.has_api_cache(endpoint, params, max_age_hours=24):
+            cached_data = self.cache.get_api_cache(endpoint, params)
+            if cached_data:
+                logger.debug(f"Użyto cache dla wypowiedzi {statement_num} z {date}")
+                return cached_data
+
+        try:
+            content = self._make_request(endpoint)
+
+            if content is not None:
+                if isinstance(content, bytes):
+                    html_content = content.decode('utf-8', errors='replace')
+                else:
+                    html_content = content
+
+                # Zapisz do cache
+                self.cache.set_api_cache(endpoint, html_content, params, ttl_hours=24)
+                logger.debug(f"Pobrano HTML dla wypowiedzi {statement_num} z {date}")
+                return html_content
+            else:
+                logger.warning(f"Brak HTML dla wypowiedzi {statement_num} z {date}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Błąd pobierania HTML wypowiedzi {statement_num} z {date}: {e}")
+            return None
 
     def get_statement_full_text(self, term: int, proceeding_id: int, date: str, statement_num: int) -> Optional[str]:
         """
-        Pobiera pełną treść konkretnej wypowiedzi w formacie tekstowym
+        Pobiera pełną treść konkretnej wypowiedzi w formacie tekstowym z cache'em
 
         Args:
             term: numer kadencji
@@ -223,26 +282,54 @@ class SejmAPI:
         Returns:
             Pełna treść wypowiedzi jako string lub None
         """
-        # Próbujemy endpoint z tekstem
-        text_content = self._make_request(
-            f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts/{statement_num}/text")
+        text_endpoint = f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts/{statement_num}/text"
+        params = {"term": term, "proceeding": proceeding_id, "date": date, "statement": statement_num}
 
-        if text_content:
-            if isinstance(text_content, bytes):
-                return text_content.decode('utf-8', errors='replace')
-            elif isinstance(text_content, dict) and 'text' in text_content:
-                return text_content['text']
-            elif isinstance(text_content, str):
-                return text_content
+        # Cache na 24 godziny dla treści wypowiedzi
+        if self.cache.has_api_cache(text_endpoint, params, max_age_hours=24):
+            cached_data = self.cache.get_api_cache(text_endpoint, params)
+            if cached_data:
+                logger.debug(f"Użyto cache dla treści wypowiedzi {statement_num} z {date}")
+                return cached_data
 
-        # Jeśli dedykowany endpoint nie istnieje, pobieramy HTML i wyciągamy tekst
-        html_content = self.get_statement_html(term, proceeding_id, date, statement_num)
-        if html_content:
-            # Podstawowe usunięcie tagów HTML (można zastąpić BeautifulSoup jeśli potrzeba)
-            import re
-            text = re.sub(r'<[^>]+>', '', html_content)
-            text = re.sub(r'\s+', ' ', text).strip()
-            return text
+        # Próbujemy najpierw dedykowany endpoint tekstowy
+        try:
+            text_content = self._make_request(text_endpoint)
+
+            if text_content:
+                final_text = None
+                if isinstance(text_content, bytes):
+                    final_text = text_content.decode('utf-8', errors='replace')
+                elif isinstance(text_content, dict) and 'text' in text_content:
+                    final_text = text_content['text']
+                elif isinstance(text_content, str):
+                    final_text = text_content
+
+                if final_text:
+                    self.cache.set_api_cache(text_endpoint, final_text, params, ttl_hours=24)
+                    logger.debug(f"Pobrano tekst dla wypowiedzi {statement_num} z {date}")
+                    return final_text
+
+        except Exception as e:
+            logger.debug(f"Dedykowany endpoint tekstowy nie działa dla {statement_num}: {e}")
+
+        # Fallback - pobieramy HTML i wyciągamy tekst
+        try:
+            html_content = self.get_statement_html(term, proceeding_id, date, statement_num)
+            if html_content:
+                # Podstawowe usunięcie tagów HTML
+                import re
+                text = re.sub(r'<[^>]+>', '', html_content)
+                text = re.sub(r'\s+', ' ', text).strip()
+
+                if text:
+                    # Zapisz wynik do cache pod kluczem tekstowym
+                    self.cache.set_api_cache(text_endpoint, text, params, ttl_hours=24)
+                    logger.debug(f"Wyciągnięto tekst z HTML dla wypowiedzi {statement_num} z {date}")
+                    return text
+
+        except Exception as e:
+            logger.error(f"Błąd fallback dla wypowiedzi {statement_num} z {date}: {e}")
 
         return None
 
