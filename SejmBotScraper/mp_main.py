@@ -1,98 +1,71 @@
 #!/usr/bin/env python3
 # mp_main.py
 """
-SejmBot MP Scraper - Główny plik do pobierania danych posłów
-
-Narzędzie do pobierania informacji o posłach, klubach i statystykach
-z API Sejmu Rzeczypospolitej Polskiej.
+SejmBot MP Scraper v3.0 - Entry point dla scrapowania posłów
+Zintegrowany z nową modularną architekturą
 """
 
-import argparse
-import logging
 import sys
 from pathlib import Path
 
-from config import LOG_LEVEL, LOG_FORMAT, LOGS_DIR, DEFAULT_TERM
-from mp_scraper import MPScraper
+# Dodaj główny katalog do PYTHONPATH
+sys.path.insert(0, str(Path(__file__).parent))
 
+import argparse
+import logging
+from typing import Dict, Any
 
-def setup_logging(verbose: bool = False, log_file: str = None):
-    """
-    Konfiguruje system logowania
+from sejmbot_scraper import (
+    # Główne komponenty
+    SejmScraper, get_settings, setup_logging,
+    get_version_info, validate_installation,
 
-    Args:
-        verbose: czy wyświetlać szczegółowe logi
-        log_file: ścieżka do pliku z logami (opcjonalne)
-    """
-    level = logging.DEBUG if verbose else getattr(logging, LOG_LEVEL.upper())
+    # Typy
+    MPScrapingStats,
 
-    # Usuń istniejące handlery żeby uniknąć duplikatów
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
+    # Wyjątki
+    SejmScraperError, ConfigValidationError
+)
 
-    # Konfiguracja podstawowa - handler konsoli
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-    console_formatter = logging.Formatter(LOG_FORMAT)
-    console_handler.setFormatter(console_formatter)
-
-    # Lista handlerów
-    handlers = [console_handler]
-
-    # Dodaj handler pliku jeśli podano
-    if log_file:
-        # Upewnij się, że katalog logs istnieje
-        logs_path = Path(LOGS_DIR)
-        logs_path.mkdir(exist_ok=True)
-
-        log_file_path = logs_path / log_file
-
-        try:
-            file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
-            file_handler.setLevel(level)
-            file_formatter = logging.Formatter(LOG_FORMAT)
-            file_handler.setFormatter(file_formatter)
-            handlers.append(file_handler)
-
-            print(f"Logi będą zapisywane do: {log_file_path.absolute()}")
-
-        except Exception as e:
-            print(f"Ostrzeżenie: Nie można utworzyć pliku logów {log_file_path}: {e}")
-            print("Kontynuuję tylko z logowaniem do konsoli.")
-
-    # Konfiguruj logger podstawowy z handlerami
-    root_logger.setLevel(level)
-    for handler in handlers:
-        root_logger.addHandler(handler)
+logger = logging.getLogger(__name__)
 
 
 def print_banner():
     """Wyświetla banner aplikacji"""
-    banner = """
-╔══════════════════════════════════════════════════════════════╗
-║                    SejmBot MP Scraper                        ║
-║                                                              ║
-║            Narzędzie do pobierania danych posłów             ║
-║                      Wersja 1.0.0                            ║
-╚══════════════════════════════════════════════════════════════╝
+    version_info = get_version_info()
+    banner = f"""
+╔══════════════════════════════════════════════════════════════════╗
+║                    SejmBot MP Scraper v{version_info['version']}                        ║
+║                                                                  ║
+║            Narzędzie do pobierania danych posłów                 ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
     """
     print(banner)
 
 
-def main():
-    """Główna funkcja programu"""
+def create_cli_parser():
+    """Tworzy parser argumentów CLI"""
     parser = argparse.ArgumentParser(
-        description="SejmBot MP Scraper - pobiera dane posłów z API Sejmu RP",
+        description="SejmBot MP Scraper v3.0 - pobiera dane posłów z API Sejmu RP",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Przykłady użycia:
-  %(prog)s                              # pobierz wszystkich posłów z 10. kadencji
+  %(prog)s                              # pobierz wszystkich posłów z domyślnej kadencji
   %(prog)s -t 9                         # pobierz posłów z 9. kadencji
   %(prog)s --mp-id 123                  # pobierz konkretnego posła
   %(prog)s --clubs-only                 # pobierz tylko kluby parlamentarne
   %(prog)s --summary                    # wyświetl podsumowanie bez pobierania
   %(prog)s --no-photos --no-stats       # pomiń zdjęcia i statystyki głosowań
+  %(prog)s --complete                   # pobierz wszystko: posłów, kluby, zdjęcia i statystyki
   %(prog)s -v --log-file mp_scraper.log # verbose z zapisem do pliku
+
+Diagnostyka:
+  %(prog)s --health-check               # sprawdź stan aplikacji
+  %(prog)s --version                    # pokaż wersję
+
+Konfiguracja:
+  %(prog)s --config .env.production     # użyj konkretnego pliku konfiguracji
         """
     )
 
@@ -100,8 +73,7 @@ Przykłady użycia:
     parser.add_argument(
         '-t', '--term',
         type=int,
-        default=DEFAULT_TERM,
-        help=f'Numer kadencji (domyślnie: {DEFAULT_TERM})'
+        help='Numer kadencji (domyślnie z konfiguracji)'
     )
 
     parser.add_argument(
@@ -142,6 +114,26 @@ Przykłady użycia:
         help='Wyświetl podsumowanie posłów bez pobierania danych'
     )
 
+    # Opcje diagnostyczne
+    parser.add_argument(
+        '--health-check',
+        action='store_true',
+        help='Sprawdź stan aplikacji'
+    )
+
+    parser.add_argument(
+        '--version',
+        action='store_true',
+        help='Pokaż informacje o wersji'
+    )
+
+    # Opcje konfiguracji
+    parser.add_argument(
+        '--config',
+        type=str,
+        help='Ścieżka do pliku konfiguracji (.env)'
+    )
+
     # Opcje logowania
     parser.add_argument(
         '-v', '--verbose',
@@ -155,22 +147,121 @@ Przykłady użycia:
         help='Zapisuj logi do pliku (w katalogu logs/)'
     )
 
-    args = parser.parse_args()
+    return parser
 
-    # Konfiguruj logowanie przed jakąkolwiek operacją
-    setup_logging(args.verbose, args.log_file)
 
-    # Wyświetl banner
-    if not args.summary:
-        print_banner()
+def get_mps_summary(scraper, term: int) -> Dict:
+    """Pobiera podsumowanie posłów dla kadencji"""
+    try:
+        # Użyj API do pobrania podstawowych informacji
+        mps = scraper.api.get_mps(term) if hasattr(scraper, 'api') else None
 
-    # Utwórz scraper
-    scraper = MPScraper()
+        if not mps:
+            return None
+
+        clubs = {}
+        for mp in mps:
+            club = mp.get('club', 'Brak klubu')
+            if club not in clubs:
+                clubs[club] = 0
+            clubs[club] += 1
+
+        return {
+            'term': term,
+            'total_mps': len(mps),
+            'clubs': clubs,
+            'clubs_count': len(clubs)
+        }
+
+    except Exception as e:
+        logger.error(f"Błąd pobierania podsumowania posłów: {e}")
+        return None
+
+
+def handle_diagnostic_operations(args: Dict[str, Any]) -> int:
+    """Obsługuje operacje diagnostyczne"""
+    if args.get('health_check'):
+        from sejmbot_scraper import quick_health_check
+
+        print("Sprawdzanie stanu aplikacji...")
+        health = quick_health_check()
+
+        print("\nSTAN APLIKACJI")
+        print("=" * 40)
+        print(f"Status: {'ZDROWA' if health.get('healthy') else 'PROBLEMY'}")
+
+        components = health.get('components', {})
+        for name, status in components.items():
+            status_text = 'OK' if status.get('healthy') else 'BŁĄD'
+            print(f"{name}: {status_text}")
+            if not status.get('healthy') and 'error' in status:
+                print(f"  -> {status['error']}")
+
+        return 0 if health.get('healthy') else 1
+
+    if args.get('version'):
+        info = get_version_info()
+        print(f"\nSejmBotScraper v{info['version']}")
+        print(f"Autor: {info['author']}")
+        print(f"Opis: {info['description']}")
+        print(f"Python: {info['python_version']}")
+        print(f"Platforma: {info['platform']}")
+        return 0
+
+    return 1  # Nie obsłużono
+
+
+def main():
+    """Główna funkcja programu"""
+    parser = create_cli_parser()
+    args = vars(parser.parse_args())
 
     try:
+        # Załaduj konfigurację
+        settings = get_settings(args.get('config'))
+
+        # Konfiguruj logowanie
+        if args.get('log_file'):
+            import logging
+            from logging.handlers import RotatingFileHandler
+
+            log_file = Path(settings.get('logging.log_dir')) / args['log_file']
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+
+            level = logging.DEBUG if args.get('verbose') else logging.INFO
+
+            logging.basicConfig(
+                level=level,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.StreamHandler(sys.stdout),
+                    RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8')
+                ]
+            )
+
+            print(f"Logi będą zapisywane do: {log_file}")
+        else:
+            setup_logging(settings)
+            if args.get('verbose'):
+                logging.getLogger().setLevel(logging.DEBUG)
+
+        # Obsłuż operacje diagnostyczne
+        if any(args.get(op) for op in ['version', 'health_check']):
+            return handle_diagnostic_operations(args)
+
+        # Wyświetl banner dla głównych operacji
+        if not args.get('summary'):
+            print_banner()
+
+        # Pobierz term z konfiguracji jeśli nie podano
+        term = args.get('term') or settings.get('default_term')
+
+        # Utwórz scraper
+        scraper = SejmScraper()
+
         # Podsumowanie posłów
-        if args.summary:
-            summary = scraper.get_mps_summary(args.term)
+        if args.get('summary'):
+            summary = get_mps_summary(scraper, term)
             if summary:
                 print(f"Podsumowanie posłów kadencji {summary['term']}:")
                 print("-" * 60)
@@ -182,89 +273,122 @@ Przykłady użycia:
                                           key=lambda x: x[1], reverse=True):
                     print(f"  {club}: {count} posłów")
             else:
-                print(f"Nie można pobrać informacji o posłach kadencji {args.term}.")
-            return
+                print(f"Nie można pobrać informacji o posłach kadencji {term}.")
+            return 0
 
         # Walidacja parametrów
-        if args.mp_id is not None and args.mp_id <= 0:
-            print(f"Błąd: ID posła musi być większe niż 0 (podano: {args.mp_id})")
-            sys.exit(1)
+        if args.get('mp_id') is not None and args['mp_id'] <= 0:
+            print(f"Błąd: ID posła musi być większe niż 0 (podano: {args['mp_id']})")
+            return 1
 
-        logging.info("Rozpoczynanie procesu pobierania danych posłów...")
+        logger.info("Rozpoczynanie procesu pobierania danych posłów...")
 
         # Konkretny poseł
-        if args.mp_id:
-            download_photos = not args.no_photos
-            download_stats = not args.no_stats
+        if args.get('mp_id'):
+            download_photos = not args.get('no_photos', False)
+            download_stats = not args.get('no_stats', False)
 
             success = scraper.scrape_specific_mp(
-                args.term,
-                args.mp_id,
-                download_photos,
-                download_stats
+                term,
+                args['mp_id'],
+                download_photos=download_photos,
+                download_voting_stats=download_stats
             )
 
             if success:
-                print(f"\n✅ Pomyślnie pobrano dane posła ID {args.mp_id} z kadencji {args.term}")
+                print(f"\nPomyślnie pobrano dane posła ID {args['mp_id']} z kadencji {term}")
+                return 0
             else:
-                print(f"\n❌ Błąd podczas pobierania posła ID {args.mp_id}")
-                sys.exit(1)
+                print(f"\nBłąd podczas pobierania posła ID {args['mp_id']}")
+                return 1
 
         # Tylko kluby
-        elif args.clubs_only:
-            print("🏛️  Pobieranie klubów parlamentarnych...")
-            stats = scraper.scrape_clubs(args.term)
+        elif args.get('clubs_only'):
+            print("Pobieranie klubów parlamentarnych...")
+            stats = scraper.scrape_clubs(term)
 
-            print(f"\n📊 PODSUMOWANIE POBIERANIA KLUBÓW")
+            print(f"\nPODSUMOWANIE POBIERANIA KLUBÓW")
             print("=" * 50)
-            print(f"Pobrane kluby: {stats['clubs_downloaded']}")
-            print(f"Błędy: {stats['errors']}")
+            print(f"Pobrane kluby: {stats.get('clubs_downloaded', 0)}")
+            print(f"Błędy: {stats.get('errors', 0)}")
             print("=" * 50)
 
-            if stats['errors'] > 0:
-                print(f"⚠️  Proces zakończony z {stats['errors']} błędami. Sprawdź logi.")
-                sys.exit(1)
+            if stats.get('errors', 0) > 0:
+                print(f"Proces zakończony z {stats['errors']} błędami. Sprawdź logi.")
+                return 1
             else:
-                print("✅ Pobieranie klubów zakończone pomyślnie!")
+                print("Pobieranie klubów zakończone pomyślnie!")
+                return 0
 
         # Pełne pobieranie lub standardowe
         else:
-            download_photos = not args.no_photos
-            download_stats = not args.no_stats
+            download_photos = not args.get('no_photos', False)
+            download_stats = not args.get('no_stats', False)
 
-            if args.complete:
-                print("🎯 Pełne pobieranie: posłowie + kluby + zdjęcia + statystyki...")
-                stats = scraper.scrape_complete_term_data(args.term)
+            if args.get('complete'):
+                print("Pełne pobieranie: posłowie + kluby + zdjęcia + statystyki...")
+
+                # Najpierw kluby
+                clubs_stats = scraper.scrape_clubs(term)
+
+                # Następnie posłowie
+                mps_stats = scraper.scrape_mps(
+                    term,
+                    download_photos=download_photos,
+                    download_voting_stats=download_stats
+                )
+
+                # Połącz statystyki
+                stats = {
+                    'mps_downloaded': mps_stats.get('mps_downloaded', 0),
+                    'clubs_downloaded': clubs_stats.get('clubs_downloaded', 0),
+                    'photos_downloaded': mps_stats.get('photos_downloaded', 0),
+                    'voting_stats_downloaded': mps_stats.get('voting_stats_downloaded', 0),
+                    'errors': mps_stats.get('errors', 0) + clubs_stats.get('errors', 0)
+                }
             else:
-                print("👥 Pobieranie danych posłów...")
-                stats = scraper.scrape_mps(args.term, download_photos, download_stats)
+                print("Pobieranie danych posłów...")
+                stats = scraper.scrape_mps(
+                    term,
+                    download_photos=download_photos,
+                    download_voting_stats=download_stats
+                )
 
-            print(f"\n📊 PODSUMOWANIE POBIERANIA KADENCJI {args.term}")
+            print(f"\nPODSUMOWANIE POBIERANIA KADENCJI {term}")
             print("=" * 60)
-            print(f"Pobrani posłowie:       {stats['mps_downloaded']}")
-            print(f"Pobrane kluby:          {stats['clubs_downloaded']}")
-            print(f"Pobrane zdjęcia:        {stats['photos_downloaded']}")
-            print(f"Pobrane statystyki:     {stats['voting_stats_downloaded']}")
-            print(f"Błędy:                  {stats['errors']}")
+            print(f"Pobrani posłowie:       {stats.get('mps_downloaded', 0)}")
+            print(f"Pobrane kluby:          {stats.get('clubs_downloaded', 0)}")
+            print(f"Pobrane zdjęcia:        {stats.get('photos_downloaded', 0)}")
+            print(f"Pobrane statystyki:     {stats.get('voting_stats_downloaded', 0)}")
+            print(f"Błędy:                  {stats.get('errors', 0)}")
             print("=" * 60)
 
-            if stats['errors'] > 0:
-                print(f"⚠️  Proces zakończony z {stats['errors']} błędami. Sprawdź logi.")
-                sys.exit(1)
+            if stats.get('errors', 0) > 0:
+                print(f"Proces zakończony z {stats['errors']} błędami. Sprawdź logi.")
+                return 1
             else:
-                print("✅ Proces zakończony pomyślnie!")
+                print("Proces zakończony pomyślnie!")
+                return 0
+
+    except ConfigValidationError as e:
+        print(f"\nBłąd konfiguracji: {e}")
+        return 1
+
+    except SejmScraperError as e:
+        print(f"\nBłąd scrapera: {e}")
+        return 1
 
     except KeyboardInterrupt:
-        logging.info("Proces przerwany przez użytkownika (Ctrl+C)")
-        print("\n\n⏹️  Proces przerwany przez użytkownika.")
-        sys.exit(1)
+        logger.info("Proces przerwany przez użytkownika (Ctrl+C)")
+        print("\n\nProces przerwany przez użytkownika.")
+        return 1
 
     except Exception as e:
-        logging.exception("Nieoczekiwany błąd programu")
-        print(f"\n❌ Nieoczekiwany błąd: {e}")
+        logger.error(f"Nieoczekiwany błąd: {e}")
+        print(f"\nNieoczekiwany błąd: {e}")
         print("Sprawdź logi dla szczegółów.")
-        sys.exit(1)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

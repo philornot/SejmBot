@@ -1,93 +1,58 @@
 #!/usr/bin/env python3
 # main.py
 """
-SejmBot Scraper - Główny entry-point
-
-Narzędzie do pobierania wypowiedzi z posiedzeń Sejmu RP
-bez pobierania PDF-ów - tylko przez API JSON/HTML.
-Z zaawansowaną obsługą cache dla wydajności.
+SejmBot Scraper v3.0 - Główny entry-point
+Zintegrowany z nową modularną architekturą
 """
 
-import argparse
-import logging
 import sys
 from pathlib import Path
 
-from config import LOG_LEVEL, LOG_FORMAT, LOGS_DIR, DEFAULT_TERM
-from scraper import SejmScraper
+# Dodaj główny katalog do PYTHONPATH
+sys.path.insert(0, str(Path(__file__).parent))
 
+import argparse
+import logging
+from typing import Dict, Any
 
-def setup_logging(verbose: bool = False, log_file: str = None):
-    """
-    Konfiguruje system logowania
+from SejmBotScraper import (
+    # Główne komponenty
+    create_scraper, get_settings, setup_logging, validate_installation,
+    get_version_info, quick_scrape, quick_health_check,
 
-    Args:
-        verbose: czy wyświetlać szczegółowe logi
-        log_file: ścieżka do pliku z logami (opcjonalne)
-    """
-    level = logging.DEBUG if verbose else getattr(logging, LOG_LEVEL.upper())
+    # Typy
+    ScrapingStats,
 
-    # Usuń istniejące handlery żeby uniknąć duplikatów
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
+    # Wyjątki
+    SejmScraperError, ConfigValidationError
+)
 
-    # Konfiguracja podstawowa - handler konsoli
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-    console_formatter = logging.Formatter(LOG_FORMAT)
-    console_handler.setFormatter(console_formatter)
-
-    # Lista handlerów
-    handlers = [console_handler]
-
-    # Dodaj handler pliku jeśli podano
-    if log_file:
-        # Upewnij się, że katalog logs istnieje
-        logs_path = Path(LOGS_DIR)
-        logs_path.mkdir(exist_ok=True)
-
-        log_file_path = logs_path / log_file
-
-        try:
-            file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
-            file_handler.setLevel(level)
-            file_formatter = logging.Formatter(LOG_FORMAT)
-            file_handler.setFormatter(file_formatter)
-            handlers.append(file_handler)
-
-            print(f"Logi będą zapisywane do: {log_file_path.absolute()}")
-
-        except Exception as e:
-            print(f"Ostrzeżenie: Nie można utworzyć pliku logów {log_file_path}: {e}")
-            print("Kontynuję tylko z logowaniem do konsoli.")
-
-    # Konfiguruj logger podstawowy z handlerami
-    root_logger.setLevel(level)
-    for handler in handlers:
-        root_logger.addHandler(handler)
+logger = logging.getLogger(__name__)
 
 
 def print_banner():
     """Wyświetla banner aplikacji"""
-    banner = """
-╔══════════════════════════════════════════════════════════════╗
-║                    SejmBot Scraper                           ║
-║                                                              ║
-║            Pobieranie wypowiedzi z Sejmu RP                  ║
-║                  (bez PDF-ów, tylko API)                     ║
-║                      Wersja 1.0.0                            ║
-╚══════════════════════════════════════════════════════════════╝
+    version_info = get_version_info()
+    banner = f"""
+╔══════════════════════════════════════════════════════════════════╗
+║                    SejmBot Scraper v{version_info['version']}                        ║
+║                                                                  ║
+║               Pobieranie wypowiedzi z Sejmu RP                   ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
     """
     print(banner)
 
 
-def print_term_info(scraper, term):
+def print_term_info(scraper, term: int):
     """Wyświetla informacje o kadencji"""
     try:
         # Pobierz informacje o kadencji
-        term_info = scraper.api.get_term_info(term)
-        if term_info:
-            print(f"📅 Kadencja {term}: {term_info.get('from', '')} - {term_info.get('to', 'obecna')}")
+        terms = scraper.get_available_terms()
+        if terms:
+            term_info = next((t for t in terms if t.get('num') == term), None)
+            if term_info:
+                print(f"📅 Kadencja {term}: {term_info.get('from', '')} - {term_info.get('to', 'obecna')}")
 
         # Pobierz podsumowanie posiedzeń
         summary = scraper.get_term_proceedings_summary(term)
@@ -103,10 +68,10 @@ def print_term_info(scraper, term):
                 print(f"🔄 Bieżące: {current}")
 
     except Exception as e:
-        logging.warning(f"Nie można pobrać informacji o kadencji: {e}")
+        logger.warning(f"Nie można pobrać informacji o kadencji: {e}")
 
 
-def print_cache_stats(scraper: SejmScraper):
+def print_cache_stats(scraper):
     """Wyświetla szczegółowe statystyki cache"""
     stats = scraper.get_cache_stats()
 
@@ -114,49 +79,29 @@ def print_cache_stats(scraper: SejmScraper):
     print("📊 STATYSTYKI CACHE")
     print("=" * 60)
 
-    # API Cache
-    api_stats = stats['api_cache']
-    print(f"🔌 API Cache:")
-    print(f"   Łączne wpisy: {api_stats['total_entries']}")
-    print(f"   Wygasłe: {api_stats['expired']}")
-    print(f"   Przestarzałe (1h): {api_stats['stale_1h']}")
-    print(f"   Przestarzałe (24h): {api_stats['stale_24h']}")
+    # Memory cache
+    memory_stats = stats.get('memory_cache', {})
+    print(f"🧠 Memory Cache:")
+    print(f"   Wpisy: {memory_stats.get('entries', 0)}")
+    print(f"   Rozmiar: {memory_stats.get('size_mb', 0):.2f} MB")
 
-    # File Cache
-    file_stats = stats['file_cache']
-    print(f"\n📄 File Cache:")
-    print(f"   Łączne wpisy: {file_stats['total_entries']}")
-    print(f"   Pliki istnieją: {file_stats['files_exist']}")
-    print(f"   Brakujące pliki: {file_stats['files_missing']}")
-
-    # Disk usage
-    disk_stats = stats['disk_usage']
-    print(f"\n💾 Użycie dysku:")
-    print(f"   Rozmiar cache: {disk_stats['cache_dir_size_mb']:.2f} MB")
-
-    # Recommendations
-    print(f"\n💡 Rekomendacje:")
-    if api_stats['expired'] > 0:
-        print(f"   • Uruchom --cleanup-cache aby usunąć {api_stats['expired']} wygasłych wpisów")
-
-    if file_stats['files_missing'] > 0:
-        print(
-            f"   • {file_stats['files_missing']} plików z cache nie istnieje - cache zostanie automatycznie wyczyszczony")
-
-    if disk_stats['cache_dir_size_mb'] > 100:
-        print(f"   • Cache zajmuje dużo miejsca - rozważ --cleanup-cache")
+    # File cache
+    file_stats = stats.get('file_cache', {})
+    print(f"\n📁 File Cache:")
+    print(f"   Wpisy: {file_stats.get('entries', 0)}")
+    print(f"   Rozmiar: {file_stats.get('size_mb', 0):.2f} MB")
 
     print("=" * 60)
 
 
 def create_cli_parser():
-    """Tworzy parser argumentów CLI z obsługą cache"""
+    """Tworzy parser argumentów CLI"""
     parser = argparse.ArgumentParser(
-        description="SejmBot Scraper - pobiera wypowiedzi z posiedzeń Sejmu RP (bez PDF-ów)",
+        description="SejmBot Scraper v3.0 - pobiera wypowiedzi z posiedzeń Sejmu RP",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Przykłady użycia:
-  %(prog)s                              # pobierz całą 10. kadencję (tylko wypowiedzi)
+  %(prog)s                              # pobierz całą domyślną kadencję
   %(prog)s -t 9                         # pobierz 9. kadencję 
   %(prog)s -t 10 -p 15                  # pobierz konkretne posiedzenie 15
   %(prog)s -t 10 --no-full-text         # bez pełnej treści wypowiedzi (szybciej)
@@ -169,10 +114,15 @@ Zarządzanie cache:
   %(prog)s --clear-cache                # wyczyść cache
   %(prog)s --cleanup-cache              # wyczyść stare wpisy z cache
   %(prog)s --force                      # wymuś pobieranie (omiń cache)
-  %(prog)s --dry-run                    # tryb testowy - nie zapisuj danych
 
-UWAGA: Program pobiera tylko wypowiedzi przez API (JSON/HTML).
-       Nie pobiera PDF-ów stenogramów.
+Diagnostyka:
+  %(prog)s --health-check               # sprawdź stan aplikacji
+  %(prog)s --validate-install           # sprawdź instalację
+  %(prog)s --version                    # pokaż wersję
+
+Konfiguracja:
+  %(prog)s --config .env.production     # użyj konkretnego pliku konfiguracji
+  %(prog)s --show-config                # pokaż aktualną konfigurację
         """
     )
 
@@ -180,8 +130,7 @@ UWAGA: Program pobiera tylko wypowiedzi przez API (JSON/HTML).
     parser.add_argument(
         '-t', '--term',
         type=int,
-        default=DEFAULT_TERM,
-        help=f'Numer kadencji (domyślnie: {DEFAULT_TERM})'
+        help='Numer kadencji (domyślnie z konfiguracji)'
     )
 
     parser.add_argument(
@@ -203,17 +152,11 @@ UWAGA: Program pobiera tylko wypowiedzi przez API (JSON/HTML).
         help='Wymuś pobieranie - omiń cache i pobierz wszystko ponownie'
     )
 
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Tryb testowy - nie zapisuj danych, tylko pokaż co byłoby robione'
-    )
-
     # Opcje cache
     parser.add_argument(
         '--clear-cache',
         action='store_true',
-        help='Wyczyść cache API i plików'
+        help='Wyczyść cache'
     )
 
     parser.add_argument(
@@ -226,13 +169,6 @@ UWAGA: Program pobiera tylko wypowiedzi przez API (JSON/HTML).
         '--cleanup-cache',
         action='store_true',
         help='Wyczyść stare i wygasłe wpisy z cache'
-    )
-
-    parser.add_argument(
-        '--cache-type',
-        choices=['api', 'files', 'all'],
-        default='all',
-        help='Typ cache do wyczyszczenia (używane z --clear-cache)'
     )
 
     # Opcje informacyjne
@@ -248,6 +184,38 @@ UWAGA: Program pobiera tylko wypowiedzi przez API (JSON/HTML).
         help='Wyświetl podsumowanie posiedzeń bez pobierania danych'
     )
 
+    # Opcje diagnostyczne
+    parser.add_argument(
+        '--health-check',
+        action='store_true',
+        help='Sprawdź stan aplikacji'
+    )
+
+    parser.add_argument(
+        '--validate-install',
+        action='store_true',
+        help='Sprawdź instalację aplikacji'
+    )
+
+    parser.add_argument(
+        '--version',
+        action='store_true',
+        help='Pokaż informacje o wersji'
+    )
+
+    # Opcje konfiguracji
+    parser.add_argument(
+        '--config',
+        type=str,
+        help='Ścieżka do pliku konfiguracji (.env)'
+    )
+
+    parser.add_argument(
+        '--show-config',
+        action='store_true',
+        help='Wyświetl aktualną konfigurację'
+    )
+
     # Opcje logowania
     parser.add_argument(
         '-v', '--verbose',
@@ -258,205 +226,328 @@ UWAGA: Program pobiera tylko wypowiedzi przez API (JSON/HTML).
     parser.add_argument(
         '--log-file',
         type=str,
-        help='Zapisuj logi do pliku (w katalogu logs/)'
+        help='Zapisuj logi do pliku'
     )
 
     return parser
 
 
+def handle_cache_operations(args: Dict[str, Any], scraper) -> int:
+    """Obsługuje operacje cache"""
+    if args.get('clear_cache'):
+        print("Czyszczenie cache...")
+        scraper.clear_cache()
+        print("Cache wyczyszczony")
+        return 0
+
+    if args.get('cleanup_cache'):
+        print("Czyszczenie starych wpisów z cache...")
+        scraper.cleanup_cache()
+        print("Stare wpisy usunięte")
+        return 0
+
+    if args.get('cache_stats'):
+        print_cache_stats(scraper)
+        return 0
+
+    return 1  # Nie obsłużono
+
+
+def handle_info_operations(args: Dict[str, Any], scraper) -> int:
+    """Obsługuje operacje informacyjne"""
+    if args.get('list_terms'):
+        print("Dostępne kadencje:")
+        print("-" * 40)
+
+        terms = scraper.get_available_terms()
+        if terms:
+            for term in reversed(terms):  # Najnowsze na górze
+                term_num = term.get('num', '?')
+                term_from = term.get('from', '')
+                term_to = term.get('to', 'obecna')
+                print(f"  Kadencja {term_num}: {term_from} - {term_to}")
+        else:
+            print("  Nie można pobrać listy kadencji")
+        return 0
+
+    if args.get('summary'):
+        term = args.get('term')
+        if not term:
+            settings = get_settings(args.get('config'))
+            term = settings.get('default_term')
+
+        print(f"Podsumowanie kadencji {term}")
+        print("-" * 50)
+
+        print_term_info(scraper, term)
+
+        summary = scraper.get_term_proceedings_summary(term)
+        if summary:
+            print(f"\nLista posiedzeń:")
+            for proc in summary:
+                number = proc.get('number', '?')
+                title = proc.get('title', 'Bez tytułu')
+                dates = ', '.join(proc.get('dates', []))
+                status = ""
+
+                if proc.get('current'):
+                    status = " [BIEŻĄCE]"
+                elif proc.get('is_future'):
+                    status = " [PRZYSZŁE]"
+
+                # Skróć tytuł jeśli za długi
+                if len(title) > 60:
+                    title = title[:57] + "..."
+
+                print(f"  {number:3d}. {title}")
+                print(f"       {dates}{status}")
+        else:
+            print("Nie można pobrać listy posiedzeń")
+        return 0
+
+    return 1  # Nie obsłużono
+
+
+def handle_diagnostic_operations(args: Dict[str, Any]) -> int:
+    """Obsługuje operacje diagnostyczne"""
+    if args.get('health_check'):
+        print("Sprawdzanie stanu aplikacji...")
+        health = quick_health_check()
+
+        print("\nSTAN APLIKACJI")
+        print("=" * 40)
+        print(f"Status: {'ZDROWA' if health.get('healthy') else 'PROBLEMY'}")
+
+        components = health.get('components', {})
+        for name, status in components.items():
+            status_text = 'OK' if status.get('healthy') else 'BŁĄD'
+            print(f"{name}: {status_text}")
+            if not status.get('healthy') and 'error' in status:
+                print(f"  -> {status['error']}")
+
+        return 0 if health.get('healthy') else 1
+
+    if args.get('validate_install'):
+        print("Walidacja instalacji...")
+        report = validate_installation()
+
+        print("\nRAPORT INSTALACJI")
+        print("=" * 40)
+        print(f"Status: {'POPRAWNA' if report['valid'] else 'PROBLEMY'}")
+
+        if report['issues']:
+            print("\nBłędy:")
+            for issue in report['issues']:
+                print(f"  - {issue}")
+
+        if report['warnings']:
+            print("\nOstrzeżenia:")
+            for warning in report['warnings']:
+                print(f"  - {warning}")
+
+        return 0 if report['valid'] else 1
+
+    if args.get('version'):
+        info = get_version_info()
+        print(f"\nSejmBotScraper v{info['version']}")
+        print(f"Autor: {info['author']}")
+        print(f"Opis: {info['description']}")
+        print(f"Python: {info['python_version']}")
+        print(f"Platforma: {info['platform']}")
+        return 0
+
+    return 1  # Nie obsłużono
+
+
+def handle_config_operations(args: Dict[str, Any]) -> int:
+    """Obsługuje operacje konfiguracji"""
+    if args.get('show_config'):
+        settings = get_settings(args.get('config'))
+        settings.print_summary()
+        return 0
+
+    return 1  # Nie obsłużono
+
+
 def main():
     """Główna funkcja programu"""
     parser = create_cli_parser()
-    args = parser.parse_args()
-
-    # Konfiguruj logowanie przed jakąkolwiek operacją
-    setup_logging(args.verbose, args.log_file)
-
-    logger = logging.getLogger(__name__)
-
-    # Sprawdź czy to tylko operacje na cache lub informacyjne
-    cache_only_operations = [args.clear_cache, args.cache_stats, args.cleanup_cache]
-    info_only_operations = [args.list_terms, args.summary]
-
-    # Wyświetl banner tylko dla głównych operacji
-    if not any(cache_only_operations + info_only_operations):
-        print_banner()
+    args = vars(parser.parse_args())
 
     try:
-        # Utwórz scraper
-        scraper = SejmScraper(force_refresh=args.force)
+        # Załaduj konfigurację
+        settings = get_settings(args.get('config'))
 
-        if args.dry_run:
-            print("🧪 TRYB TESTOWY - nie będą zapisywane żadne dane")
+        # Konfiguruj logowanie
+        if args.get('log_file'):
+            # Tymczasowo ustaw logowanie do pliku
+            import logging
+            from logging.handlers import RotatingFileHandler
 
-        # === OPERACJE TYLKO NA CACHE ===
-        if args.clear_cache:
-            print(f"🧹 Czyszczenie cache ({args.cache_type})...")
-            scraper.clear_cache(args.cache_type)
-            print("✅ Cache wyczyszczony")
-            return
+            log_file = Path(settings.get('logging.log_dir')) / args['log_file']
+            log_file.parent.mkdir(parents=True, exist_ok=True)
 
-        if args.cleanup_cache:
-            print("🧹 Czyszczenie starych wpisów z cache...")
-            scraper.cleanup_cache()
-            print("✅ Stare wpisy usunięte")
-            return
+            level = logging.DEBUG if args.get('verbose') else logging.INFO
 
-        if args.cache_stats:
-            print_cache_stats(scraper)
-            return
+            # Konfiguruj logowanie
+            logging.basicConfig(
+                level=level,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                handlers=[
+                    logging.StreamHandler(sys.stdout),
+                    RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=3, encoding='utf-8')
+                ]
+            )
 
-        # === OPERACJE INFORMACYJNE ===
-        # Lista dostępnych kadencji
-        if args.list_terms:
-            print("📋 Dostępne kadencje:")
-            print("-" * 40)
+            print(f"Logi będą zapisywane do: {log_file}")
+        else:
+            setup_logging(settings)
+            if args.get('verbose'):
+                logging.getLogger().setLevel(logging.DEBUG)
 
-            terms = scraper.get_available_terms()
-            if terms:
-                for term in reversed(terms):  # Najnowsze na górze
-                    term_num = term.get('num', '?')
-                    term_from = term.get('from', '')
-                    term_to = term.get('to', 'obecna')
-                    print(f"  Kadencja {term_num}: {term_from} - {term_to}")
-            else:
-                print("  Nie można pobrać listy kadencji")
-            return
+        # Sprawdź czy to tylko operacje diagnostyczne/informacyjne
+        info_ops = ['version', 'health_check', 'validate_install', 'show_config']
+        cache_ops = ['clear_cache', 'cache_stats', 'cleanup_cache']
+        list_ops = ['list_terms', 'summary']
 
-        # Podsumowanie posiedzeń
-        if args.summary:
-            print(f"📊 Podsumowanie kadencji {args.term}")
-            print("-" * 50)
+        is_simple_operation = any(args.get(op) for op in info_ops + cache_ops + list_ops)
 
-            print_term_info(scraper, args.term)
+        # Wyświetl banner tylko dla głównych operacji
+        if not is_simple_operation:
+            print_banner()
 
-            summary = scraper.get_term_proceedings_summary(args.term)
-            if summary:
-                print(f"\n📄 Lista posiedzeń:")
-                for proc in summary:
-                    number = proc.get('number', '?')
-                    title = proc.get('title', 'Bez tytułu')
-                    dates = ', '.join(proc.get('dates', []))
-                    status = ""
+        # Obsłuż operacje diagnostyczne
+        if any(args.get(op) for op in info_ops):
+            return handle_diagnostic_operations(args)
 
-                    if proc.get('current'):
-                        status = " [BIEŻĄCE]"
-                    elif proc.get('is_future'):
-                        status = " [PRZYSZŁE]"
+        # Obsłuż operacje konfiguracji
+        if args.get('show_config'):
+            return handle_config_operations(args)
 
-                    # Skróć tytuł jeśli za długi
-                    if len(title) > 60:
-                        title = title[:57] + "..."
+        # Utwórz scraper (dla pozostałych operacji)
+        term = args.get('term') or settings.get('default_term')
 
-                    print(f"  {number:3d}. {title}")
-                    print(f"       📅 {dates}{status}")
-            else:
-                print("Nie można pobrać listy posiedzeń")
-            return
+        # Ustaw tryb scrapowania
+        scraping_config = settings.get('scraping').copy()
+        if args.get('force'):
+            scraping_config['mode'] = 'force_refresh'
+            print("TRYB WYMUSZONY - wszystkie dane zostaną pobrane ponownie")
+
+        scraper = create_scraper(args.get('config'))
+
+        # Obsłuż operacje cache
+        if any(args.get(op) for op in cache_ops):
+            return handle_cache_operations(args, scraper)
+
+        # Obsłuż operacje informacyjne
+        if any(args.get(op) for op in list_ops):
+            return handle_info_operations(args, scraper)
 
         # === GŁÓWNE OPERACJE SCRAPOWANIA ===
 
         # Walidacja parametrów
-        if args.proceeding is not None and args.proceeding <= 0:
-            print(f"Błąd: Numer posiedzenia musi być większy niż 0 (podano: {args.proceeding})")
-            sys.exit(1)
+        if args.get('proceeding') is not None and args['proceeding'] <= 0:
+            print(f"Błąd: Numer posiedzenia musi być większy niż 0 (podano: {args['proceeding']})")
+            return 1
 
-        if args.force:
-            print("⚡ TRYB WYMUSZONY - wszystkie dane zostaną pobrane ponownie")
-
-        logging.info("Rozpoczynanie procesu pobierania wypowiedzi...")
+        logger.info("Rozpoczynanie procesu pobierania wypowiedzi...")
 
         # Wyświetl info o kadencji
-        print_term_info(scraper, args.term)
+        print_term_info(scraper, term)
 
-        fetch_full_statements = not args.no_full_text
+        fetch_full_statements = not args.get('no_full_text', False)
 
         if fetch_full_statements:
-            print("📄 Będą pobierane pełne treści wypowiedzi (może potrwać dłużej)")
+            print("Będą pobierane pełne treści wypowiedzi (może potrwać dłużej)")
         else:
-            print("⚡ Pobieranie tylko metadanych wypowiedzi (szybszy tryb)")
+            print("Pobieranie tylko metadanych wypowiedzi (szybszy tryb)")
 
         # Konkretne posiedzenie
-        if args.proceeding:
-            print(f"\n🎯 Pobieranie posiedzenia {args.proceeding} z kadencji {args.term}")
+        if args.get('proceeding'):
+            proceeding = args['proceeding']
+            print(f"\nPobieranie posiedzenia {proceeding} z kadencji {term}")
 
-            if not args.dry_run:
-                success = scraper.scrape_specific_proceeding(
-                    args.term,
-                    args.proceeding,
-                    fetch_full_statements
-                )
+            success = scraper.scrape_proceeding(
+                term,
+                proceeding,
+                fetch_full_statements=fetch_full_statements
+            )
 
-                if success:
-                    print(f"\n✅ Pomyślnie pobrano posiedzenie {args.proceeding}")
-                else:
-                    print(f"\n❌ Błąd podczas pobierania posiedzenia {args.proceeding}")
-                    sys.exit(1)
+            if success:
+                print(f"\nPomyślnie pobrano posiedzenie {proceeding}")
+                return 0
             else:
-                print(f"🧪 Tryb testowy: pobrano by posiedzenie {args.proceeding}")
+                print(f"\nBłąd podczas pobierania posiedzenia {proceeding}")
+                return 1
 
         # Cała kadencja
         else:
-            print(f"\n🏛️  Pobieranie całej kadencji {args.term}")
-            print("⏳ To może potrwać kilka minut...")
+            print(f"\nPobieranie całej kadencji {term}")
+            print("To może potrwać kilka minut...")
 
-            if not args.dry_run:
-                stats = scraper.scrape_term(args.term, fetch_full_statements, args.force)
+            stats = scraper.scrape_term(
+                term,
+                fetch_full_statements=fetch_full_statements,
+                force_refresh=args.get('force', False)
+            )
 
-                print(f"\n📊 PODSUMOWANIE POBIERANIA KADENCJI {args.term}")
-                print("=" * 60)
-                print(f"Przetworzone posiedzenia:     {stats['proceedings_processed']}")
-                print(f"Pominięte przyszłe:           {stats['future_proceedings_skipped']}")
-                print(f"Przetworzone wypowiedzi:      {stats['statements_processed']}")
-                print(f"Wypowiedzi z pełną treścią:   {stats['statements_with_full_content']}")
-                print(f"Zidentyfikowani mówcy:        {stats['speakers_identified']}")
-                print(f"Wzbogacenia danymi posłów:    {stats['mp_data_enrichments']}")
-                print(f"Błędy:                        {stats['errors']}")
-                print("=" * 60)
+            print(f"\nPODSUMOWANIE POBIERANIA KADENCJI {term}")
+            print("=" * 60)
+            print(f"Przetworzone posiedzenia:     {stats.get('proceedings_processed', 0)}")
+            print(f"Pominięte przyszłe:           {stats.get('future_proceedings_skipped', 0)}")
+            print(f"Przetworzone wypowiedzi:      {stats.get('statements_processed', 0)}")
+            print(f"Wypowiedzi z pełną treścią:   {stats.get('statements_with_full_content', 0)}")
+            print(f"Zidentyfikowani mówcy:        {stats.get('speakers_identified', 0)}")
+            print(f"Wzbogacenia danymi posłów:    {stats.get('mp_data_enrichments', 0)}")
+            print(f"Błędy:                        {stats.get('errors', 0)}")
+            print("=" * 60)
 
-                if stats['errors'] > 0:
-                    print(f"⚠️  Proces zakończony z {stats['errors']} błędami. Sprawdź logi.")
-                    sys.exit(1)
-                else:
-                    print("✅ Proces zakończony pomyślnie!")
+            if stats.get('errors', 0) > 0:
+                print(f"Proces zakończony z {stats['errors']} błędami. Sprawdź logi.")
+                return 1
             else:
-                print(f"🧪 Tryb testowy: pobrano by całą kadencję {args.term}")
+                print("Proces zakończony pomyślnie!")
 
         # Wyświetl informację o strukturze danych
-        if not args.dry_run:
-            print(f"\n📁 Dane zapisane w: {scraper.file_manager.base_dir}")
-            print("📋 Struktura:")
-            print("   └── kadencja_XX/")
-            print("       ├── posiedzenie_XXX_YYYY-MM-DD/")
-            print("       │   ├── info_posiedzenia.json")
-            print("       │   └── transcripts/")
-            print("       │       └── transkrypty_YYYY-MM-DD.json")
+        print(f"\nDane zapisane w: {settings.get('scraping.base_output_dir')}")
+        print("Struktura:")
+        print("   └── kadencja_XX/")
+        print("       ├── posiedzenie_XXX_YYYY-MM-DD/")
+        print("       │   ├── info_posiedzenia.json")
+        print("       │   └── transcripts/")
+        print("       │       └── transkrypty_YYYY-MM-DD.json")
 
-            if not fetch_full_statements:
-                print("\n💡 Wskazówka: Uruchom ponownie bez --no-full-text aby pobrać pełne treści")
+        if not fetch_full_statements:
+            print("\nWskazówka: Uruchom ponownie bez --no-full-text aby pobrać pełne treści")
 
-        # Wyświetl informacje o cache na koniec (tylko dla głównych operacji)
-        if not any(cache_only_operations + info_only_operations) and not args.dry_run:
-            print("\n💾 Cache info:")
-            cache_stats = scraper.get_cache_stats()
-            print(f"   API: {cache_stats['api_cache']['total_entries']} wpisów")
-            print(f"   Pliki: {cache_stats['file_cache']['total_entries']} wpisów")
-            print("   Użyj --cache-stats aby zobaczyć szczegóły")
+        # Wyświetl informacje o cache na koniec
+        cache_stats = scraper.get_cache_stats()
+        print("\nCache info:")
+        print(f"   Memory: {cache_stats.get('memory_cache', {}).get('entries', 0)} wpisów")
+        print(f"   File: {cache_stats.get('file_cache', {}).get('entries', 0)} wpisów")
+        print("   Użyj --cache-stats aby zobaczyć szczegóły")
+
+        return 0
+
+    except ConfigValidationError as e:
+        print(f"\nBłąd konfiguracji: {e}")
+        return 1
+
+    except SejmScraperError as e:
+        print(f"\nBłąd scrapera: {e}")
+        return 1
 
     except KeyboardInterrupt:
-        logging.info("Proces przerwany przez użytkownika (Ctrl+C)")
-        print("\n\n⏹️  Proces przerwany przez użytkownika.")
-        sys.exit(1)
+        logger.info("Proces przerwany przez użytkownika (Ctrl+C)")
+        print("\n\nProces przerwany przez użytkownika.")
+        return 1
 
     except Exception as e:
         logger.error(f"Nieoczekiwany błąd: {e}")
-        logging.exception("Nieoczekiwany błąd programu")
-        print(f"\n❌ Nieoczekiwany błąd: {e}")
+        print(f"\nNieoczekiwany błąd: {e}")
         print("Sprawdź logi dla szczegółów.")
-        sys.exit(1)
-
-    return 0
+        return 1
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())
