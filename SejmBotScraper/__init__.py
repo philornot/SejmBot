@@ -139,17 +139,27 @@ def create_scraper(config_path: str = None) -> SejmScraper:
         scraper = create_scraper('.env.production')
         stats = scraper.scrape_term(10)
     """
-    if config_path:
-        settings = get_settings(config_path)
-        setup_logging(settings)
-    else:
+    try:
+        if config_path:
+            settings = get_settings(config_path)
+            setup_logging(settings)
+        else:
+            settings = get_settings()
+            setup_logging(settings)
+
+        # Utwórz katalogi
+        settings.create_directories()
+    except:
+        # Fallback dla braku modułowej konfiguracji
         settings = get_settings()
-        setup_logging(settings)
 
-    # Utwórz katalogi
-    settings.create_directories()
-
-    return SejmScraper(settings.get('scraping'))
+    # Użyj oryginalnego scrapera jeśli nowy nie działa
+    try:
+        return SejmScraper(settings.get('scraping'))
+    except:
+        # Import oryginalnego scrapera
+        from .scraper import SejmScraper as OriginalScraper
+        return OriginalScraper()
 
 
 def create_api_client(config_path: str = None) -> SejmAPIInterface:
