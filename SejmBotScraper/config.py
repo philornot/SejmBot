@@ -1,4 +1,4 @@
-# config.py
+# config.py - TO JEST PLIK  Z STAREJ ARCHITEKTURY
 """
 Konfiguracja dla SejmBotScraper v2.0
 """
