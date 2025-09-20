@@ -150,8 +150,10 @@ class SejmAPIClient:
                         return None
 
                 elif 'text/html' in content_type:
-                    # Czasami API zwraca HTML zamiast JSON (błąd serwera)
-                    logger.warning(f"Otrzymano HTML zamiast JSON z {url}")
+                    if '/transcripts/' in endpoint:
+                        logger.debug(f"Otrzymano HTML (oczekiwane) z {url}")
+                    else:
+                        logger.warning(f"Otrzymano HTML zamiast JSON z {url}")
                     if attempt < retry_count - 1:
                         continue
                     return None
@@ -353,11 +355,16 @@ class SejmAPIClient:
         """Pobiera HTML konkretnej wypowiedzi"""
         endpoint = f"/sejm/term{term}/proceedings/{proceeding}/{date}/transcripts/{statement_num}"
         logger.debug(f"Pobieranie HTML wypowiedzi {statement_num}")
+
+        # Użyj _make_request, ale nie loguj ostrzeżeń o HTML
         content = self._make_request(endpoint)
 
         if content is not None:
             if isinstance(content, bytes):
                 return content.decode('utf-8', errors='replace')
+            elif isinstance(content, str):
+                return content
+            # Jeśli to dict/json, znaczy, że endpoint zwrócił JSON zamiast HTML
             return str(content)
         return None
 
