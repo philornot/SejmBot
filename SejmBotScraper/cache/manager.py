@@ -1,13 +1,11 @@
 """
-Interfejs managera cache — orkiestruje różne typy cache
-Mały plik interfejsowy — implementacje w osobnych plikach
+Naprawiony interfejs managera cache
+Integruje naprawione implementacje cache
 """
 
 import logging
 from pathlib import Path
 from typing import Optional, Any, Dict, Union
-
-from ..core.types import CacheStats
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +13,7 @@ logger = logging.getLogger(__name__)
 class CacheInterface:
     """
     Główny interfejs do zarządzania cache
-
-    Orkiestruje różne typy cache:
-    - Memory cache (szybki, tymczasowy)
-    - File cache (trwały, metadane plików)
-    - API cache (zapytania do API)
+    NAPRAWIONA WERSJA - używa poprawnych implementacji
     """
 
     def __init__(self, config=None):
@@ -31,17 +25,99 @@ class CacheInterface:
         """
         self.config = config or {}
 
-        # Import implementacji dopiero tutaj aby uniknąć circular imports
-        from .file_cache import FileCacheImpl
-        from .memory_cache import MemoryCacheImpl
+        # Import naprawionych implementacji
+        try:
+            from .file_cache import FileCacheImpl
+            self.file_cache = FileCacheImpl(config)
+            logger.debug("Załadowano FileCacheImpl")
+        except ImportError as e:
+            logger.warning(f"Nie można załadować FileCacheImpl: {e}")
+            self.file_cache = self._create_fallback_file_cache()
 
-        # Inicjalizacja różnych typów cache
-        self.file_cache = FileCacheImpl(config)
-        self.memory_cache = MemoryCacheImpl(config)
+        try:
+            from .implementations.memory_cache import MemoryCacheImpl
+            self.memory_cache = MemoryCacheImpl(config)
+            logger.debug("Załadowano MemoryCacheImpl")
+        except ImportError as e:
+            logger.warning(f"Nie można załadować MemoryCacheImpl: {e}")
+            self.memory_cache = self._create_fallback_memory_cache()
 
-        logger.debug("Zainicjalizowano interfejs cache")
+        logger.debug("Zainicjalizowano naprawiony interfejs cache")
+
+    def _create_fallback_memory_cache(self):
+        """Tworzy fallback memory cache"""
+
+        class FallbackMemoryCache:
+            def __init__(self):
+                self._cache = {}
+
+            def get(self, key): return self._cache.get(key)
+
+            def set(self, key, value, ttl=None): self._cache[key] = value
+
+            def has(self, key): return key in self._cache
+
+            def clear(self, pattern=None): self._cache.clear()
+
+            def get_age(self, key): return None
+
+            def cleanup_expired(self): return 0
+
+            def get_stats(self):
+                return {
+                    'entries': len(self._cache),
+                    'size_mb': 0,
+                    'api_entries': len([k for k in self._cache.keys() if k.startswith('api_')])
+                }
+
+        return FallbackMemoryCache()
+
+    def _create_fallback_file_cache(self):
+        """Tworzy fallback file cache"""
+
+        class FallbackFileCache:
+            def has_file_cache(self, filepath, check_content=False): return False
+
+            def get_file_cache(self, filepath): return None
+
+            def set_file_cache(self, filepath, metadata): pass
+
+            def cleanup_expired(self): return 0
+
+            def clear(self): pass
+
+            def get_stats(self): return {'entries': 0, 'size_mb': 0}
+
+            def should_refresh_proceeding(self, *args, **kwargs): return True
+
+            def mark_proceeding_checked(self, *args, **kwargs): pass
+
+        return FallbackFileCache()
 
     # === API CACHE (w pamięci, szybkie) ===
+
+    def get(self, key: str) -> Optional[Any]:
+        """
+        Pobiera dane z cache (głównie dla API)
+
+        Args:
+            key: klucz cache
+
+        Returns:
+            Dane z cache lub None
+        """
+        return self.memory_cache.get(key)
+
+    def set(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+        """
+        Zapisuje dane do cache (głównie dla API)
+
+        Args:
+            key: klucz cache
+            value: wartość do zapisania
+            ttl: czas życia w sekundach
+        """
+        return self.memory_cache.set(key, value, ttl)
 
     def get_api_cache(self, key: str, params: Optional[Dict] = None) -> Optional[Any]:
         """
@@ -55,7 +131,10 @@ class CacheInterface:
             Dane z cache lub None
         """
         cache_key = self._generate_api_key(key, params)
-        return self.memory_cache.get(cache_key)
+        result = self.memory_cache.get(cache_key)
+        if result is not None:
+            logger.debug(f"Cache API hit: {key}")
+        return result
 
     def set_api_cache(self, key: str, value: Any, params: Optional[Dict] = None,
                       ttl: Optional[int] = None) -> None:
@@ -70,6 +149,7 @@ class CacheInterface:
         """
         cache_key = self._generate_api_key(key, params)
         self.memory_cache.set(cache_key, value, ttl)
+        logger.debug(f"Cache API set: {key}")
 
     def has_api_cache(self, key: str, params: Optional[Dict] = None,
                       max_age_hours: Optional[int] = None) -> bool:
@@ -160,39 +240,7 @@ class CacheInterface:
         Returns:
             True, jeśli wymaga odświeżenia
         """
-        if force:
-            return True
-
-        cache_key = f"proceeding_check_{term}_{proceeding_id}"
-
-        # Sprawdź, czy posiedzenie było już sprawdzane
-        check_data = self.memory_cache.get(cache_key)
-        if check_data:
-            # Jeśli było sprawdzane w ciągu ostatnich 6 godzin, nie odświeżaj
-            age = self.memory_cache.get_age(cache_key)
-            if age is not None and age < (6 * 3600):  # 6 godzin
-                return False
-
-        # Sprawdź, czy wszystkie pliki transkryptów istnieją
-        from ..storage.file_manager import FileManagerInterface
-        file_manager = FileManagerInterface()
-
-        missing_dates = []
-        for date in proceeding_dates:
-            # Sprawdź, czy jest w przyszłości
-            from datetime import datetime, date as date_obj
-            try:
-                proceeding_date = datetime.strptime(date, '%Y-%m-%d').date()
-                if proceeding_date > date_obj.today():
-                    continue  # Pomiń przyszłe daty
-            except ValueError:
-                continue
-
-            # Sprawdź, czy plik istnieje
-            if not self._transcript_file_exists(term, proceeding_id, date, file_manager):
-                missing_dates.append(date)
-
-        return len(missing_dates) > 0
+        return self.file_cache.should_refresh_proceeding(term, proceeding_id, proceeding_dates, force)
 
     def mark_proceeding_checked(self, term: int, proceeding_id: int, status: str) -> None:
         """
@@ -203,24 +251,19 @@ class CacheInterface:
             proceeding_id: ID posiedzenia
             status: status sprawdzenia (processed, skipped, error)
         """
-        cache_key = f"proceeding_check_{term}_{proceeding_id}"
-        check_data = {
-            'status': status,
-            'checked_at': self._get_current_timestamp(),
-            'term': term,
-            'proceeding_id': proceeding_id
-        }
-
-        # Cache na 24 godziny
-        self.memory_cache.set(cache_key, check_data, ttl=24 * 3600)
+        self.file_cache.mark_proceeding_checked(term, proceeding_id, status)
 
     # === OGÓLNE ZARZĄDZANIE CACHE ===
 
-    def clear_all(self) -> None:
+    def clear(self) -> None:
         """Czyści wszystkie cache"""
         logger.info("Czyszczenie wszystkich cache")
         self.memory_cache.clear()
         self.file_cache.clear()
+
+    def clear_all(self) -> None:
+        """Alias dla clear()"""
+        self.clear()
 
     def cleanup_expired(self) -> Dict[str, int]:
         """
@@ -234,39 +277,60 @@ class CacheInterface:
         results = {}
 
         # Cleanup memory cache
-        if hasattr(self.memory_cache, 'cleanup_expired'):
+        try:
             results['memory'] = self.memory_cache.cleanup_expired()
+        except Exception as e:
+            logger.warning(f"Błąd cleanup memory cache: {e}")
+            results['memory'] = 0
 
         # Cleanup file cache
-        if hasattr(self.file_cache, 'cleanup_expired'):
+        try:
             results['file'] = self.file_cache.cleanup_expired()
+        except Exception as e:
+            logger.warning(f"Błąd cleanup file cache: {e}")
+            results['file'] = 0
 
         total_cleaned = sum(results.values())
         logger.info(f"Wyczyszczono {total_cleaned} wygasłych wpisów cache")
 
         return results
 
-    def get_stats(self) -> CacheStats:
+    def get_stats(self) -> Dict:
         """
         Zwraca łączne statystyki cache
 
         Returns:
             Statystyki wszystkich typów cache
         """
-        memory_stats = self.memory_cache.get_stats() if hasattr(self.memory_cache, 'get_stats') else {}
-        file_stats = self.file_cache.get_stats() if hasattr(self.file_cache, 'get_stats') else {}
+        memory_stats = {}
+        file_stats = {}
 
-        return CacheStats(
-            memory_entries=memory_stats.get('entries', 0),
-            file_entries=file_stats.get('entries', 0),
-            api_entries=memory_stats.get('api_entries', 0),
-            memory_hits=memory_stats.get('hits', 0),
-            memory_misses=memory_stats.get('misses', 0),
-            file_hits=file_stats.get('hits', 0),
-            file_misses=file_stats.get('misses', 0),
-            total_size_mb=memory_stats.get('size_mb', 0) + file_stats.get('size_mb', 0),
-            last_cleanup=memory_stats.get('last_cleanup') or file_stats.get('last_cleanup')
-        )
+        try:
+            memory_stats = self.memory_cache.get_stats()
+        except Exception as e:
+            logger.warning(f"Nie można pobrać memory stats: {e}")
+
+        try:
+            file_stats = self.file_cache.get_stats()
+        except Exception as e:
+            logger.warning(f"Nie można pobrać file stats: {e}")
+
+        return {
+            'memory_cache': {
+                'entries': memory_stats.get('entries', 0),
+                'size_mb': memory_stats.get('size_mb', 0),
+                'api_entries': memory_stats.get('api_entries', 0),
+                'hits': memory_stats.get('hits', 0),
+                'misses': memory_stats.get('misses', 0),
+                'hit_rate': memory_stats.get('hit_rate', 0)
+            },
+            'file_cache': {
+                'entries': file_stats.get('entries', 0),
+                'size_mb': file_stats.get('size_mb', 0),
+                'files_exist': file_stats.get('files_exist', 0),
+                'files_missing': file_stats.get('files_missing', 0)
+            }
+        }
 
     def get_size_mb(self) -> float:
         """
@@ -275,8 +339,18 @@ class CacheInterface:
         Returns:
             Rozmiar w MB
         """
-        memory_size = self.memory_cache.get_size_mb() if hasattr(self.memory_cache, 'get_size_mb') else 0
-        file_size = self.file_cache.get_size_mb() if hasattr(self.file_cache, 'get_size_mb') else 0
+        memory_size = 0
+        file_size = 0
+
+        try:
+            memory_size = self.memory_cache.get_size_mb()
+        except:
+            pass
+
+        try:
+            file_size = self.file_cache.get_size_mb()
+        except:
+            pass
 
         return memory_size + file_size
 
@@ -306,22 +380,6 @@ class CacheInterface:
             return f"api_{endpoint}#{param_str}"
         return f"api_{endpoint}"
 
-    @staticmethod
-    def _transcript_file_exists(term: int, proceeding_id: int, date: str, file_manager) -> bool:
-        """Sprawdza, czy plik transkryptu istnieje"""
-        try:
-            # Buduj ścieżkę do pliku transkryptu
-            transcript_path = file_manager.get_transcript_file_path(term, proceeding_id, date)
-            return Path(transcript_path).exists()
-        except Exception:
-            return False
-
-    @staticmethod
-    def _get_current_timestamp() -> float:
-        """Zwraca aktualny timestamp"""
-        import time
-        return time.time()
-
     # === METODY DIAGNOSTYCZNE ===
 
     def health_check(self) -> Dict:
@@ -331,9 +389,29 @@ class CacheInterface:
         Returns:
             Raport zdrowia cache
         """
+        import time
+
         health = {
             'healthy': True,
-            'timestamp': self._get_current_timestamp(),
-            'components': {}
+            'timestamp': time.time(),
+            'components': {
+                'memory_cache': {'healthy': True},
+                'file_cache': {'healthy': True}
+            },
+            'stats': self.get_stats()
         }
+
+        # Test memory cache
+        try:
+            test_key = f"health_test_{int(time.time())}"
+            self.memory_cache.set(test_key, "test", ttl=1)
+            test_val = self.memory_cache.get(test_key)
+            if test_val != "test":
+                health['components']['memory_cache'] = {'healthy': False, 'error': 'Test failed'}
+                health['healthy'] = False
+            self.memory_cache.delete(test_key)
+        except Exception as e:
+            health['components']['memory_cache'] = {'healthy': False, 'error': str(e)}
+            health['healthy'] = False
+
         return health

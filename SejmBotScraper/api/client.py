@@ -1,12 +1,10 @@
 """
 Interfejs klienta API Sejmu RP
-Mały plik interfejsowy - implementacja w sejm_client.py
+Mały plik interfejsowy – implementacja w sejm_client.py
 """
 
 import logging
 from typing import List, Dict, Optional
-
-from SejmBotScraper.core.types import TermInfo, ProceedingInfo, StatementInfo, MPInfo, ClubInfo
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +13,7 @@ class SejmAPIInterface:
     """
     Interfejs do komunikacji z API Sejmu RP
 
-    Ten plik zawiera tylko interfejs - rzeczywista implementacja
+    Ten plik zawiera tylko interfejs – rzeczywista implementacja
     znajduje się w sejm_client.py
     """
 
@@ -35,7 +33,7 @@ class SejmAPIInterface:
 
     # === KADENCJE I POSIEDZENIA ===
 
-    def get_terms(self) -> Optional[List[TermInfo]]:
+    def get_terms(self) -> Optional[List[Dict]]:
         """
         Pobiera listę kadencji
 
@@ -45,7 +43,7 @@ class SejmAPIInterface:
         logger.debug("Pobieranie listy kadencji")
         return self._client.get_terms()
 
-    def get_term_info(self, term: int) -> Optional[TermInfo]:
+    def get_term_info(self, term: int) -> Optional[Dict]:
         """
         Pobiera informacje o konkretnej kadencji
 
@@ -58,7 +56,7 @@ class SejmAPIInterface:
         logger.debug(f"Pobieranie informacji o kadencji {term}")
         return self._client.get_term_info(term)
 
-    def get_proceedings(self, term: int) -> Optional[List[ProceedingInfo]]:
+    def get_proceedings(self, term: int) -> Optional[List[Dict]]:
         """
         Pobiera listę posiedzeń kadencji
 
@@ -69,9 +67,11 @@ class SejmAPIInterface:
             Lista posiedzeń lub None
         """
         logger.debug(f"Pobieranie listy posiedzeń kadencji {term}")
-        return self._client.get_proceedings(term)
+        result = self._client.get_proceedings(term)
+        logger.debug(f"get_proceedings result: {result is not None}, length: {len(result) if result else 0}")
+        return result
 
-    def get_proceeding_info(self, term: int, proceeding_id: int) -> Optional[ProceedingInfo]:
+    def get_proceeding_info(self, term: int, proceeding_id: int) -> Optional[Dict]:
         """
         Pobiera szczegółowe informacje o posiedzeniu
 
@@ -87,7 +87,7 @@ class SejmAPIInterface:
 
     # === STENOGRAMY ===
 
-    def get_statements(self, term: int, proceeding: int, date: str) -> Optional[List[StatementInfo]]:
+    def get_statements(self, term: int, proceeding: int, date: str) -> Optional[Dict]:
         """
         Pobiera wypowiedzi z danego dnia posiedzenia
 
@@ -101,6 +101,21 @@ class SejmAPIInterface:
         """
         logger.debug(f"Pobieranie wypowiedzi {term}/{proceeding}/{date}")
         return self._client.get_transcripts_list(term, proceeding, date)
+
+    # ALIAS dla kompatybilności z scraper.py
+    def get_transcripts_list(self, term: int, proceeding: int, date: str) -> Optional[Dict]:
+        """
+        Alias dla get_statements() - dla kompatybilności z istniejącym kodem
+
+        Args:
+            term: numer kadencji
+            proceeding: ID posiedzenia
+            date: data w formacie YYYY-MM-DD
+
+        Returns:
+            Lista wypowiedzi lub None
+        """
+        return self.get_statements(term, proceeding, date)
 
     def get_statement_html(self, term: int, proceeding: int, date: str, statement_num: int) -> Optional[str]:
         """
@@ -136,7 +151,7 @@ class SejmAPIInterface:
 
     # === POSŁOWIE ===
 
-    def get_mps(self, term: int) -> Optional[List[MPInfo]]:
+    def get_mps(self, term: int) -> Optional[List[Dict]]:
         """
         Pobiera listę posłów kadencji
 
@@ -149,7 +164,7 @@ class SejmAPIInterface:
         logger.debug(f"Pobieranie listy posłów kadencji {term}")
         return self._client.get_mps(term)
 
-    def get_mp_info(self, term: int, mp_id: int) -> Optional[MPInfo]:
+    def get_mp_info(self, term: int, mp_id: int) -> Optional[Dict]:
         """
         Pobiera szczegółowe informacje o pośle
 
@@ -162,6 +177,20 @@ class SejmAPIInterface:
         """
         logger.debug(f"Pobieranie informacji o pośle {mp_id} kadencji {term}")
         return self._client.get_mp_info(term, mp_id)
+
+    # ALIAS dla kompatybilności z scraper.py
+    def get_mp_details(self, term: int, mp_id: int) -> Optional[Dict]:
+        """
+        Alias dla get_mp_info() - dla kompatybilności z istniejącym kodem
+
+        Args:
+            term: numer kadencji
+            mp_id: ID posła
+
+        Returns:
+            Informacje o pośle lub None
+        """
+        return self.get_mp_info(term, mp_id)
 
     def get_mp_photo(self, term: int, mp_id: int) -> Optional[bytes]:
         """
@@ -193,7 +222,7 @@ class SejmAPIInterface:
 
     # === KLUBY ===
 
-    def get_clubs(self, term: int) -> Optional[List[ClubInfo]]:
+    def get_clubs(self, term: int) -> Optional[List[Dict]]:
         """
         Pobiera listę klubów parlamentarnych
 
@@ -206,7 +235,7 @@ class SejmAPIInterface:
         logger.debug(f"Pobieranie listy klubów kadencji {term}")
         return self._client.get_clubs(term)
 
-    def get_club_info(self, term: int, club_id: int) -> Optional[ClubInfo]:
+    def get_club_info(self, term: int, club_id: int) -> Optional[Dict]:
         """
         Pobiera szczegółowe informacje o klubie
 
@@ -219,6 +248,20 @@ class SejmAPIInterface:
         """
         logger.debug(f"Pobieranie informacji o klubie {club_id} kadencji {term}")
         return self._client.get_club_info(term, club_id)
+
+    # ALIAS dla kompatybilności z scraper.py
+    def get_club_details(self, term: int, club_id: int) -> Optional[Dict]:
+        """
+        Alias dla get_club_info() - dla kompatybilności z istniejącym kodem
+
+        Args:
+            term: numer kadencji
+            club_id: ID klubu
+
+        Returns:
+            Informacje o klubie lub None
+        """
+        return self.get_club_info(term, club_id)
 
     def get_club_logo(self, term: int, club_id: int) -> Optional[bytes]:
         """

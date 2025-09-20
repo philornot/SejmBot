@@ -1,6 +1,6 @@
-# mp_scraper.py
 """
 Scraper danych posłów z API Sejmu RP
+Zaktualizowana wersja dla modularnej struktury
 """
 
 import json
@@ -9,29 +9,79 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional
 
-from config import DEFAULT_TERM, BASE_OUTPUT_DIR
-from sejm_api import SejmAPI
-
 logger = logging.getLogger(__name__)
+
+try:
+    # Import z głównych modułów projektu
+    from ...api.client import SejmAPIInterface
+    from ...config import get_settings
+    from ...core.types import MPScrapingStats, create_empty_mp_stats
+except ImportError:
+    # Fallback imports
+    try:
+        from sejm_api import SejmAPI as SejmAPIInterface
+    except ImportError:
+        class SejmAPIInterface:
+            def __init__(self):
+                pass
+
+            def get_clubs(self, term):
+                return []
+
+            def get_club_details(self, term, club_id):
+                return {}
+
+            def get_club_logo(self, term, club_id):
+                return None
+
+            def get_mps(self, term):
+                return []
+
+            def get_mp_details(self, term, mp_id):
+                return {}
+
+            def get_mp_photo(self, term, mp_id):
+                return None
+
+            def get_mp_voting_stats(self, term, mp_id):
+                return {}
+
+
+    def get_settings():
+        return {'scraping': {'base_output_dir': 'data_sejm'}}
+
+
+    def create_empty_mp_stats():
+        return {
+            'mps_downloaded': 0,
+            'clubs_downloaded': 0,
+            'photos_downloaded': 0,
+            'voting_stats_downloaded': 0,
+            'errors': 0
+        }
+
+
+    # Typ dla mypy
+    MPScrapingStats = Dict[str, int]
 
 
 class MPScraper:
     """Scraper do pobierania i zarządzania danymi posłów"""
 
-    def __init__(self):
-        self.api = SejmAPI()
-        self.base_dir = Path(BASE_OUTPUT_DIR)
-        self.stats = {
-            'mps_downloaded': 0,
-            'clubs_downloaded': 0,
-            'photos_downloaded': 0,
-            'errors': 0,
-            'voting_stats_downloaded': 0
-        }
+    def __init__(self, config: Optional[Dict] = None):
+        try:
+            self.settings = get_settings()
+            self.base_dir = Path(self.settings.get('scraping', {}).get('base_output_dir', 'data_sejm'))
+        except:
+            self.settings = {'scraping': {'base_output_dir': 'data_sejm'}}
+            self.base_dir = Path('data_sejm')
+
+        self.api = SejmAPIInterface()
+        self.stats = create_empty_mp_stats()
 
     def _ensure_mp_directory(self, term: int) -> Path:
         """Tworzy strukturę katalogów dla danych posłów"""
-        mp_dir = self.base_dir / f"kadencja_{term:02d}" / "poslowie"
+        mp_dir = self.base_dir / "poslowie" / f"kadencja_{term:02d}"
         mp_dir.mkdir(parents=True, exist_ok=True)
 
         # Podkatalogi
@@ -54,20 +104,12 @@ class MPScraper:
             return False
 
     def _download_mp_photo(self, term: int, mp_id: int, mp_dir: Path) -> Optional[str]:
-        """
-        Pobiera zdjęcie posła
-
-        Args:
-            term: numer kadencji
-            mp_id: ID posła
-            mp_dir: katalog dla danych posłów
-
-        Returns:
-            Ścieżka do zapisanego zdjęcia lub None
-        """
+        """Pobiera zdjęcie posła"""
         try:
             logger.debug(f"Pobieranie zdjęcia posła {mp_id}")
-            photo_content = self.api._make_request(f"/sejm/term{term}/MP/{mp_id}/photo")
+
+            # Użyj metod z API interface
+            photo_content = self.api.get_mp_photo(term, mp_id)
 
             if photo_content and isinstance(photo_content, bytes):
                 # Sprawdź typ zawartości po pierwszych bajtach
@@ -95,20 +137,12 @@ class MPScraper:
             return None
 
     def _download_mp_voting_stats(self, term: int, mp_id: int, mp_dir: Path) -> Optional[str]:
-        """
-        Pobiera statystyki głosowań posła
-
-        Args:
-            term: numer kadencji
-            mp_id: ID posła
-            mp_dir: katalog dla danych posłów
-
-        Returns:
-            Ścieżka do zapisanych statystyk lub None
-        """
+        """Pobiera statystyki głosowań posła"""
         try:
             logger.debug(f"Pobieranie statystyk głosowań posła {mp_id}")
-            stats = self.api._make_request(f"/sejm/term{term}/MP/{mp_id}/votings/stats")
+
+            # Użyj metod z API interface
+            stats = self.api.get_mp_voting_stats(term, mp_id)
 
             if stats:
                 stats_path = mp_dir / "statystyki_glosowan" / f"posel_{mp_id:03d}_statystyki.json"
@@ -125,34 +159,15 @@ class MPScraper:
 
     @staticmethod
     def _safe_format_id(id_value, default_width=2):
-        """
-        Bezpiecznie formatuje ID - może być string lub int
-
-        Args:
-            id_value: wartość ID (string lub int)
-            default_width: szerokość formatowania dla int
-
-        Returns:
-            Sformatowane ID jako string
-        """
+        """Bezpiecznie formatuje ID - może być string lub int"""
         try:
-            # Spróbuj przekonwertować na int i sformatować
             id_int = int(id_value)
             return f"{id_int:0{default_width}d}"
         except (ValueError, TypeError):
-            # Jeśli nie da się przekonwertować, użyj jako string
             return str(id_value)
 
-    def scrape_clubs(self, term: int = DEFAULT_TERM) -> Dict:
-        """
-        Pobiera informacje o klubach parlamentarnych
-
-        Args:
-            term: numer kadencji
-
-        Returns:
-            Statystyki procesu
-        """
+    def scrape_clubs(self, term: int = 10) -> MPScrapingStats:
+        """Pobiera informacje o klubach parlamentarnych"""
         logger.info(f"Pobieranie klubów parlamentarnych kadencji {term}")
 
         mp_dir = self._ensure_mp_directory(term)
@@ -160,7 +175,7 @@ class MPScraper:
 
         try:
             # Pobierz listę klubów
-            clubs = self.api._make_request(f"/sejm/term{term}/clubs")
+            clubs = self.api.get_clubs(term)
             if not clubs:
                 logger.error("Nie można pobrać listy klubów")
                 return self.stats
@@ -183,18 +198,16 @@ class MPScraper:
                     logger.info(f"Pobieranie szczegółów klubu: {club_name}")
 
                     # Szczegóły klubu
-                    club_details = self.api._make_request(f"/sejm/term{term}/clubs/{club_id}")
+                    club_details = self.api.get_club_details(term, club_id)
                     if club_details:
                         safe_name = self._make_safe_filename(club_name)
-                        # Bezpieczne formatowanie ID
                         formatted_id = self._safe_format_id(club_id, 2)
                         club_path = clubs_dir / f"klub_{formatted_id}_{safe_name}.json"
                         self._save_json(club_details, club_path)
 
                     # Logo klubu
-                    logo_content = self.api._make_request(f"/sejm/term{term}/clubs/{club_id}/logo")
+                    logo_content = self.api.get_club_logo(term, club_id)
                     if logo_content and isinstance(logo_content, bytes):
-                        # Określ rozszerzenie na podstawie zawartości
                         if logo_content.startswith(b'\x89PNG'):
                             ext = 'png'
                         elif logo_content.startswith(b'\xff\xd8'):
@@ -202,7 +215,7 @@ class MPScraper:
                         elif logo_content.startswith(b'GIF'):
                             ext = 'gif'
                         else:
-                            ext = 'png'  # domyślnie
+                            ext = 'png'
 
                         safe_name = self._make_safe_filename(club_name)
                         formatted_id = self._safe_format_id(club_id, 2)
@@ -225,26 +238,16 @@ class MPScraper:
 
         return self.stats
 
-    def scrape_mps(self, term: int = DEFAULT_TERM, download_photos: bool = True,
-                   download_voting_stats: bool = True) -> Dict:
-        """
-        Pobiera dane wszystkich posłów z danej kadencji
-
-        Args:
-            term: numer kadencji
-            download_photos: czy pobierać zdjęcia posłów
-            download_voting_stats: czy pobierać statystyki głosowań
-
-        Returns:
-            Statystyki procesu
-        """
+    def scrape_mps(self, term: int = 10, download_photos: bool = True,
+                   download_voting_stats: bool = True) -> MPScrapingStats:
+        """Pobiera dane wszystkich posłów z danej kadencji"""
         logger.info(f"Rozpoczynanie pobierania danych posłów kadencji {term}")
 
         mp_dir = self._ensure_mp_directory(term)
 
         try:
             # Pobierz listę posłów
-            mps = self.api._make_request(f"/sejm/term{term}/MP")
+            mps = self.api.get_mps(term)
             if not mps:
                 logger.error("Nie można pobrać listy posłów")
                 return self.stats
@@ -267,13 +270,13 @@ class MPScraper:
 
                 try:
                     # Pobierz szczegółowe dane posła
-                    mp_details = self.api._make_request(f"/sejm/term{term}/MP/{mp_id}")
+                    mp_details = self.api.get_mp_details(term, mp_id)
                     if mp_details:
                         # Dodaj dodatkowe metadane
                         mp_details['_metadata'] = {
                             'scraped_at': datetime.now().isoformat(),
                             'term': term,
-                            'scraper_version': '1.0'
+                            'scraper_version': '3.0'
                         }
 
                         # Ścieżki do dodatkowych plików
@@ -417,25 +420,14 @@ class MPScraper:
 
     def scrape_specific_mp(self, term: int, mp_id: int, download_photos: bool = True,
                            download_voting_stats: bool = True) -> bool:
-        """
-        Pobiera dane konkretnego posła
-
-        Args:
-            term: numer kadencji
-            mp_id: ID posła
-            download_photos: czy pobrać zdjęcie
-            download_voting_stats: czy pobrać statystyki głosowań
-
-        Returns:
-            True, jeśli sukces
-        """
+        """Pobiera dane konkretnego posła"""
         logger.info(f"Pobieranie danych posła ID {mp_id} z kadencji {term}")
 
         mp_dir = self._ensure_mp_directory(term)
 
         try:
             # Pobierz dane posła
-            mp_details = self.api._make_request(f"/sejm/term{term}/MP/{mp_id}")
+            mp_details = self.api.get_mp_details(term, mp_id)
             if not mp_details:
                 logger.error(f"Nie można pobrać danych posła {mp_id}")
                 return False
@@ -447,7 +439,7 @@ class MPScraper:
             mp_details['_metadata'] = {
                 'scraped_at': datetime.now().isoformat(),
                 'term': term,
-                'scraper_version': '1.0'
+                'scraper_version': '3.0'
             }
 
             mp_details['_files'] = {}
@@ -480,19 +472,11 @@ class MPScraper:
             self.stats['errors'] += 1
             return False
 
-    def get_mps_summary(self, term: int = DEFAULT_TERM) -> Optional[Dict]:
-        """
-        Zwraca podsumowanie posłów bez pobierania szczegółów
-
-        Args:
-            term: numer kadencji
-
-        Returns:
-            Słownik z podsumowaniem lub None
-        """
+    def get_mps_summary(self, term: int = 10) -> Optional[Dict]:
+        """Zwraca podsumowanie posłów bez pobierania szczegółów"""
         try:
-            mps = self.api._make_request(f"/sejm/term{term}/MP")
-            if mps is None:  # Sprawdzaj explicite None
+            mps = self.api.get_mps(term)
+            if mps is None:
                 return None
 
             clubs = {}
@@ -513,22 +497,39 @@ class MPScraper:
             logger.error(f"Błąd pobierania podsumowania posłów: {e}")
             return None
 
-    def scrape_complete_term_data(self, term: int = DEFAULT_TERM) -> Dict:
-        """
-        Pobiera wszystkie dane związane z posłami dla danej kadencji
-
-        Args:
-            term: numer kadencji
-
-        Returns:
-            Statystyki procesu
-        """
+    def scrape_complete_term_data(self, term: int = 10) -> MPScrapingStats:
+        """Pobiera wszystkie dane związane z posłami dla danej kadencji"""
         logger.info(f"Rozpoczynanie pobierania pełnych danych kadencji {term}")
 
         # Pobierz kluby
-        self.scrape_clubs(term)
+        clubs_stats = self.scrape_clubs(term)
 
         # Pobierz posłów
-        self.scrape_mps(term, download_photos=True, download_voting_stats=True)
+        mps_stats = self.scrape_mps(term, download_photos=True, download_voting_stats=True)
 
-        return self.stats
+        # Połącz statystyki
+        combined_stats = {
+            'mps_downloaded': mps_stats.get('mps_downloaded', 0),
+            'clubs_downloaded': clubs_stats.get('clubs_downloaded', 0),
+            'photos_downloaded': mps_stats.get('photos_downloaded', 0),
+            'voting_stats_downloaded': mps_stats.get('voting_stats_downloaded', 0),
+            'errors': mps_stats.get('errors', 0) + clubs_stats.get('errors', 0)
+        }
+
+        return combined_stats
+
+    def clear_cache(self):
+        """Czyści cache scrapera"""
+        if hasattr(self.api, 'clear_cache'):
+            self.api.clear_cache()
+
+    def cleanup_cache(self):
+        """Czyści stare wpisy z cache"""
+        if hasattr(self.api, 'cleanup_cache'):
+            self.api.cleanup_cache()
+
+    def get_cache_stats(self) -> Dict:
+        """Zwraca statystyki cache"""
+        if hasattr(self.api, 'get_cache_stats'):
+            return self.api.get_cache_stats()
+        return {}

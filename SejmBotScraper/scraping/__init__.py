@@ -1,7 +1,7 @@
-"""Moduł scraping"""
-try:
-    from .scraper import SejmScraper
+"""
+Moduł scraping — główne interfejsy do pobierania danych z Sejmu RP
+"""
 
-    __all__ = ['SejmScraper']
-except ImportError:
-    __all__ = []
+from .scraper import SejmScraper
+
+__all__ = ['SejmScraper']

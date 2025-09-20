@@ -1,6 +1,6 @@
-# file_manager.py
 """
-Zarządzanie plikami i folderami dla SejmBotScraper
+Implementacja operacji na plikach i folderach
+Bazuje na oryginalnym FileManager z dodatkową funkcjonalnością
 """
 
 import json
@@ -9,22 +9,41 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
 
-from config import BASE_OUTPUT_DIR
-
 logger = logging.getLogger(__name__)
 
 
-class FileManager:
-    """Zarządzanie strukturą plików i zapisem strukturyzowanych danych wypowiedzi"""
+class FileOperationsImpl:
+    """Implementacja operacji na plikach i folderach dla SejmBotScraper"""
 
-    def __init__(self):
-        self.base_dir = Path(BASE_OUTPUT_DIR)
+    def __init__(self, base_dir: Optional[str] = None):
+        """
+        Inicjalizuje operacje na plikach
+
+        Args:
+            base_dir: katalog bazowy (opcjonalny, domyślnie z konfiguracji)
+        """
+        if base_dir:
+            self.base_dir = Path(base_dir)
+        else:
+            # Fallback do domyślnego katalogu
+            try:
+                from ..config.settings import get_settings
+                settings = get_settings()
+                self.base_dir = Path(settings.get('scraping.base_output_dir', './data'))
+            except Exception:
+                self.base_dir = Path('./data')
+
         self.ensure_base_directory()
+        logger.debug(f"Zainicjalizowano FileOperationsImpl: {self.base_dir}")
 
     def ensure_base_directory(self):
         """Tworzy główny katalog jeśli nie istnieje"""
-        self.base_dir.mkdir(exist_ok=True)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Upewniono się o istnieniu katalogu: {self.base_dir}")
+
+    def get_base_directory(self) -> Path:
+        """Zwraca katalog bazowy"""
+        return self.base_dir
 
     def get_term_directory(self, term: int) -> Path:
         """
@@ -37,7 +56,7 @@ class FileManager:
             Path do katalogu kadencji
         """
         term_dir = self.base_dir / f"kadencja_{term:02d}"
-        term_dir.mkdir(exist_ok=True)
+        term_dir.mkdir(parents=True, exist_ok=True)
         return term_dir
 
     def get_proceeding_directory(self, term: int, proceeding_id: int, proceeding_info: Dict) -> Path:
@@ -63,7 +82,7 @@ class FileManager:
             proceeding_name += f"_{first_date}"
 
         proceeding_dir = term_dir / proceeding_name
-        proceeding_dir.mkdir(exist_ok=True)
+        proceeding_dir.mkdir(parents=True, exist_ok=True)
 
         logger.debug(f"Utworzono katalog posiedzenia: {proceeding_dir}")
         return proceeding_dir
@@ -82,7 +101,7 @@ class FileManager:
         """
         proceeding_dir = self.get_proceeding_directory(term, proceeding_id, proceeding_info)
         transcripts_dir = proceeding_dir / "transcripts"
-        transcripts_dir.mkdir(exist_ok=True)
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
         return transcripts_dir
 
     def save_proceeding_transcripts(self, term: int, proceeding_id: int, date: str,
@@ -273,23 +292,6 @@ class FileManager:
             logger.error(f"Błąd sprawdzania istniejących transkryptów: {e}")
             return []
 
-    def load_transcript_file(self, filepath: str) -> Optional[Dict]:
-        """
-        Ładuje plik transkryptu
-
-        Args:
-            filepath: ścieżka do pliku
-
-        Returns:
-            Dane transkryptu lub None w przypadku błędu
-        """
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Błąd wczytywania transkryptu {filepath}: {e}")
-            return None
-
     def get_proceeding_summary(self, term: int, proceeding_id: int, proceeding_info: Dict) -> Dict:
         """
         Tworzy podsumowanie posiedzenia na podstawie zapisanych transkryptów
@@ -316,8 +318,11 @@ class FileManager:
             }
 
             if transcripts_dir.exists():
+                from .data_serializers import DataSerializersImpl
+                serializer = DataSerializersImpl()
+
                 for file in transcripts_dir.glob("transkrypty_*.json"):
-                    transcript_data = self.load_transcript_file(str(file))
+                    transcript_data = serializer.load_json(file)
                     if transcript_data:
                         summary["total_days"] += 1
                         summary["total_statements"] += len(transcript_data.get("statements", []))

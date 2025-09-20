@@ -1,6 +1,6 @@
 """
 Interfejs zarządzania plikami i strukturą danych
-Mały plik interfejsowy — implementacja w file_operations.py
+Mały plik interfejsowy – implementacja w file_operations.py
 """
 
 import logging
@@ -18,7 +18,10 @@ class FileManagerInterface:
     Interfejs do zarządzania plikami i strukturą danych
 
     Odpowiada za:
-    - Strukturę katalogów projektu — Zapis/odczyt plików JSON — Zarządzanie metadanymi plików — Organizację danych według kadencji i posiedzeń
+    - Strukturę katalogów projektu
+    - Zapis/odczyt plików JSON
+    - Zarządzanie metadanymi plików
+    - Organizację danych według kadencji i posiedzeń
     """
 
     def __init__(self, base_dir: Optional[str] = None):
@@ -188,7 +191,25 @@ class FileManagerInterface:
             Lista dat w formacie YYYY-MM-DD
         """
         try:
-            return self.operations.get_existing_transcripts(term, proceeding_id, proceeding_info or {})
+            # Bezpieczne wywołanie - sprawdź czy metoda istnieje
+            if hasattr(self.operations, 'get_existing_transcripts'):
+                return self.operations.get_existing_transcripts(term, proceeding_id, proceeding_info or {})
+            else:
+                # Fallback - implementuj lokalnie
+                transcripts_dir = self.get_transcripts_directory(term, proceeding_id, proceeding_info)
+                if not transcripts_dir.exists():
+                    return []
+
+                existing_dates = []
+                for transcript_file in transcripts_dir.glob("transkrypty_*.json"):
+                    # Wyciągnij datę z nazwy pliku
+                    filename = transcript_file.stem  # transkrypty_2023-01-15
+                    date_part = filename.replace("transkrypty_", "")
+                    if len(date_part) == 10:  # YYYY-MM-DD
+                        existing_dates.append(date_part)
+
+                return sorted(existing_dates)
+
         except Exception as e:
             logger.error(f"Błąd pobierania istniejących transkryptów: {e}")
             return []
@@ -227,7 +248,30 @@ class FileManagerInterface:
         logger.debug(f"Zapisywanie informacji o posiedzeniu {term}/{proceeding_id}")
 
         try:
-            return self.operations.save_proceeding_info(term, proceeding_id, proceeding_info)
+            # Bezpieczne wywołanie - sprawdź czy metoda istnieje
+            if hasattr(self.operations, 'save_proceeding_info'):
+                return self.operations.save_proceeding_info(term, proceeding_id, proceeding_info)
+            else:
+                # Fallback - implementuj lokalnie
+                proceeding_dir = self.get_proceeding_directory(term, proceeding_id, proceeding_info)
+                proceeding_dir.mkdir(parents=True, exist_ok=True)
+
+                info_file = proceeding_dir / "info_posiedzenia.json"
+
+                # Dodaj metadane
+                save_data = {
+                    'metadata': {
+                        'saved_at': datetime.now().isoformat(),
+                        'term': term,
+                        'proceeding_id': proceeding_id
+                    },
+                    'data': proceeding_info
+                }
+
+                if self.serializers.save_json(info_file, save_data):
+                    return str(info_file)
+                return None
+
         except Exception as e:
             logger.error(f"Błąd zapisywania informacji o posiedzeniu: {e}")
             return None
@@ -250,7 +294,11 @@ class FileManagerInterface:
             info_file = proceeding_dir / "info_posiedzenia.json"
 
             if info_file.exists():
-                return self.serializers.load_json(info_file)
+                data = self.serializers.load_json(info_file)
+                # Jeśli dane mają strukturę z metadata, zwróć tylko data część
+                if isinstance(data, dict) and 'data' in data and 'metadata' in data:
+                    return data['data']
+                return data
             return None
 
         except Exception as e:
@@ -277,7 +325,7 @@ class FileManagerInterface:
         try:
             term_dir = self.get_term_directory(term)
             mp_dir = term_dir / "poslowie"
-            mp_dir.mkdir(exist_ok=True)
+            mp_dir.mkdir(parents=True, exist_ok=True)
 
             if filename is None:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -325,13 +373,20 @@ class FileManagerInterface:
             if filename:
                 filepath = mp_dir / filename
                 if filepath.exists():
-                    return self.serializers.load_json(filepath)
+                    data = self.serializers.load_json(filepath)
+                    # Jeśli dane mają strukturę z metadata, zwróć tylko data część
+                    if isinstance(data, dict) and 'data' in data and 'metadata' in data:
+                        return data['data']
+                    return data
             else:
                 # Znajdź najnowszy plik
                 mp_files = list(mp_dir.glob("poslowie_*.json"))
                 if mp_files:
                     latest_file = max(mp_files, key=lambda p: p.stat().st_mtime)
-                    return self.serializers.load_json(latest_file)
+                    data = self.serializers.load_json(latest_file)
+                    if isinstance(data, dict) and 'data' in data and 'metadata' in data:
+                        return data['data']
+                    return data
 
             return None
 
@@ -443,9 +498,49 @@ class FileManagerInterface:
             Słownik z podsumowaniem
         """
         try:
-            return self.operations.get_proceeding_summary(term, proceeding_id, proceeding_info or {})
+            # Bezpieczne wywołanie - sprawdź czy metoda istnieje
+            if hasattr(self.operations, 'get_proceeding_summary'):
+                return self.operations.get_proceeding_summary(term, proceeding_id, proceeding_info or {})
+            else:
+                # Fallback - implementuj lokalnie
+                summary = {
+                    "term": term,
+                    "proceeding_id": proceeding_id,
+                    "generated_at": datetime.now().isoformat(),
+                    "transcript_files": 0,
+                    "total_statements": 0
+                }
+
+                try:
+                    # Sprawdź czy istnieje katalog transkryptów
+                    transcripts_dir = self.get_transcripts_directory(term, proceeding_id, proceeding_info)
+                    if transcripts_dir.exists():
+                        transcript_files = list(transcripts_dir.glob("transkrypty_*.json"))
+                        summary["transcript_files"] = len(transcript_files)
+
+                        # Policz wypowiedzi
+                        total_statements = 0
+                        for transcript_file in transcript_files:
+                            transcript_data = self.load_transcript_file(transcript_file)
+                            if transcript_data and isinstance(transcript_data, dict):
+                                # Sprawdź różne możliwe struktury danych
+                                if 'data' in transcript_data:
+                                    statements = transcript_data['data'].get('statements', [])
+                                elif 'statements' in transcript_data:
+                                    statements = transcript_data['statements']
+                                else:
+                                    statements = []
+
+                                total_statements += len(statements)
+
+                        summary["total_statements"] = total_statements
+                except Exception as inner_e:
+                    logger.debug(f"Błąd w fallback implementacji: {inner_e}")
+
+                return summary
+
         except Exception as e:
-            logger.error(f"Błąd tworzenia podsumowania: {e}")
+            logger.error(f"Błąd tworzenia podsumowania posiedzenia: {e}")
             return {"error": str(e)}
 
     def get_term_summary(self, term: int) -> Dict:
@@ -490,8 +585,17 @@ class FileManagerInterface:
 
                         for transcript_file in transcript_files:
                             transcript_data = self.load_transcript_file(transcript_file)
-                            if transcript_data and 'statements' in transcript_data:
-                                total_statements += len(transcript_data['statements'])
+                            if transcript_data:
+                                # Sprawdź różne możliwe struktury danych
+                                if isinstance(transcript_data, dict):
+                                    if 'data' in transcript_data and 'statements' in transcript_data['data']:
+                                        statements = transcript_data['data']['statements']
+                                    elif 'statements' in transcript_data:
+                                        statements = transcript_data['statements']
+                                    else:
+                                        statements = []
+
+                                    total_statements += len(statements)
 
                 summary["transcripts"] = total_transcripts
                 summary["total_statements"] = total_statements
@@ -544,6 +648,182 @@ class FileManagerInterface:
         except Exception as e:
             logger.error(f"Błąd czyszczenia plików tymczasowych: {e}")
             return 0
+
+    # === DODATKOWE METODY POMOCNICZE ===
+
+    def create_backup(self, term: int, backup_name: Optional[str] = None) -> Optional[str]:
+        """
+        Tworzy kopię zapasową danych kadencji
+
+        Args:
+            term: numer kadencji
+            backup_name: nazwa kopii zapasowej (opcjonalna)
+
+        Returns:
+            Ścieżka do kopii zapasowej lub None
+        """
+        try:
+            import shutil
+
+            term_dir = self.get_term_directory(term)
+            if not term_dir.exists():
+                return None
+
+            base_dir = self.get_base_directory()
+            backup_dir = base_dir / "backups"
+            backup_dir.mkdir(exist_ok=True)
+
+            if backup_name is None:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_name = f"kadencja_{term:02d}_backup_{timestamp}"
+
+            backup_path = backup_dir / backup_name
+
+            shutil.copytree(term_dir, backup_path)
+
+            logger.info(f"Utworzono kopię zapasową: {backup_path}")
+            return str(backup_path)
+
+        except Exception as e:
+            logger.error(f"Błąd tworzenia kopii zapasowej: {e}")
+            return None
+
+    def restore_backup(self, backup_path: str, term: int) -> bool:
+        """
+        Przywraca kopię zapasową danych kadencji
+
+        Args:
+            backup_path: ścieżka do kopii zapasowej
+            term: numer kadencji do przywrócenia
+
+        Returns:
+            True jeśli sukces
+        """
+        try:
+            import shutil
+
+            backup_dir = Path(backup_path)
+            if not backup_dir.exists():
+                logger.error(f"Kopia zapasowa nie istnieje: {backup_path}")
+                return False
+
+            term_dir = self.get_term_directory(term)
+
+            # Usuń istniejący katalog kadencji jeśli istnieje
+            if term_dir.exists():
+                shutil.rmtree(term_dir)
+
+            # Przywróć z kopii
+            shutil.copytree(backup_dir, term_dir)
+
+            logger.info(f"Przywrócono kopię zapasową: {backup_path} -> {term_dir}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Błąd przywracania kopii zapasowej: {e}")
+            return False
+
+    def export_term_data(self, term: int, export_format: str = "json") -> Optional[str]:
+        """
+        Eksportuje dane kadencji do określonego formatu
+
+        Args:
+            term: numer kadencji
+            export_format: format eksportu (json, csv)
+
+        Returns:
+            Ścieżka do pliku eksportu lub None
+        """
+        try:
+            term_dir = self.get_term_directory(term)
+            if not term_dir.exists():
+                return None
+
+            base_dir = self.get_base_directory()
+            export_dir = base_dir / "exports"
+            export_dir.mkdir(exist_ok=True)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            if export_format.lower() == "json":
+                export_file = export_dir / f"kadencja_{term:02d}_export_{timestamp}.json"
+
+                # Zbierz wszystkie dane w jeden słownik
+                export_data = {
+                    "term": term,
+                    "export_timestamp": timestamp,
+                    "proceedings": []
+                }
+
+                # Przejdź przez wszystkie posiedzenia
+                for proc_dir in term_dir.glob("posiedzenie_*"):
+                    if proc_dir.is_dir():
+                        proceeding_data = {
+                            "directory_name": proc_dir.name,
+                            "transcripts": []
+                        }
+
+                        # Ładuj informacje o posiedzeniu
+                        info_file = proc_dir / "info_posiedzenia.json"
+                        if info_file.exists():
+                            proceeding_info = self.serializers.load_json(info_file)
+                            proceeding_data["info"] = proceeding_info
+
+                        # Ładuj wszystkie transkrypty
+                        transcripts_dir = proc_dir / "transcripts"
+                        if transcripts_dir.exists():
+                            for transcript_file in transcripts_dir.glob("transkrypty_*.json"):
+                                transcript_data = self.serializers.load_json(transcript_file)
+                                if transcript_data:
+                                    proceeding_data["transcripts"].append(transcript_data)
+
+                        export_data["proceedings"].append(proceeding_data)
+
+                # Zapisz do pliku JSON
+                if self.serializers.save_json(export_file, export_data):
+                    return str(export_file)
+
+            elif export_format.lower() == "csv":
+                export_file = export_dir / f"kadencja_{term:02d}_statements_{timestamp}.csv"
+
+                # Zbierz wszystkie wypowiedzi w listę
+                all_statements = []
+
+                for proc_dir in term_dir.glob("posiedzenie_*"):
+                    if proc_dir.is_dir():
+                        transcripts_dir = proc_dir / "transcripts"
+                        if transcripts_dir.exists():
+                            for transcript_file in transcripts_dir.glob("transkrypty_*.json"):
+                                transcript_data = self.serializers.load_json(transcript_file)
+                                if transcript_data and 'statements' in transcript_data:
+                                    for stmt in transcript_data['statements']:
+                                        csv_row = {
+                                            'term': term,
+                                            'proceeding_dir': proc_dir.name,
+                                            'date': transcript_data.get('metadata', {}).get('date', ''),
+                                            'statement_num': stmt.get('num', ''),
+                                            'speaker_name': stmt.get('speaker', {}).get('name', ''),
+                                            'speaker_function': stmt.get('speaker', {}).get('function', ''),
+                                            'speaker_club': stmt.get('speaker', {}).get('club', ''),
+                                            'start_time': stmt.get('timing', {}).get('start_datetime', ''),
+                                            'end_time': stmt.get('timing', {}).get('end_datetime', ''),
+                                            'duration_seconds': stmt.get('timing', {}).get('duration_seconds', ''),
+                                            'has_full_content': stmt.get('content', {}).get('has_full_content', False),
+                                            'content_preview': (stmt.get('content', {}).get('text', '')[:100] + '...'
+                                                                if len(stmt.get('content', {}).get('text', '')) > 100
+                                                                else stmt.get('content', {}).get('text', ''))
+                                        }
+                                        all_statements.append(csv_row)
+
+                # Zapisz do CSV
+                if all_statements and self.serializers.save_csv(export_file, all_statements):
+                    return str(export_file)
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Błąd eksportu danych kadencji {term}: {e}")
+            return None
 
     def __repr__(self) -> str:
         """Reprezentacja string obiektu"""

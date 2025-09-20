@@ -29,7 +29,7 @@ try:
         SejmScraperError, ConfigValidationError
     )
 except ImportError:
-    # Fallback do relatywnych importów jeśli moduł nie jest zainstalowany
+    # Fallback do relatywnych importów, jeśli moduł nie jest zainstalowany
     try:
         from core.factory import create_scraper
         from config import get_settings, setup_logging
@@ -37,7 +37,7 @@ except ImportError:
         from core.types import ScrapingStats
 
 
-        # Mock functions for missing imports
+        # Funkcje zastępcze dla brakujących importów
         def validate_installation():
             return {'valid': True, 'issues': [], 'warnings': []}
 
@@ -345,7 +345,7 @@ def handle_info_operations(args: Dict[str, Any], scraper) -> int:
                     elif proc.get('is_future'):
                         status = " [PRZYSZŁE]"
 
-                    # Skróć tytuł jeśli za długi
+                    # Skróć tytuł, jeśli za długi
                     if len(title) > 60:
                         title = title[:57] + "..."
 
@@ -457,7 +457,7 @@ def main():
             if args.get('verbose'):
                 logging.getLogger().setLevel(logging.DEBUG)
 
-        # Sprawdź czy to tylko operacje diagnostyczne/informacyjne
+        # Sprawdź, czy to tylko operacje diagnostyczne/informacyjne
         info_ops = ['version', 'health_check', 'validate_install', 'show_config']
         cache_ops = ['clear_cache', 'cache_stats', 'cleanup_cache']
         list_ops = ['list_terms', 'summary']
