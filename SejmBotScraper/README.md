@@ -426,7 +426,7 @@ from mp_scraper import MPScraper
 def download_complete_term(term):
     # Stenogramy
     scraper = SejmScraper()
-    transcript_stats = scraper.scrape_term(term, True, True)
+    transcript_stats = scraper.scrape_term(term, True)
 
     # Posłowie  
     mp_scraper = MPScraper()
