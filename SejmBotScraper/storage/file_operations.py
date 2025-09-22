@@ -5,6 +5,8 @@ Bazuje na oryginalnym FileManager z dodatkową funkcjonalnością
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
@@ -126,7 +128,42 @@ class FileOperationsImpl:
             filename = f"transkrypty_{date}.json"
             filepath = transcripts_dir / filename
 
-            # Tworzymy strukturę danych
+            # Jeśli mamy wzbogacone pełne wypowiedzi, użyjemy ich jako źródła prawdy
+            statements_to_save = []
+            if full_statements:
+                for stmt in full_statements:
+                    # Ujednolicenie pól treści - dopuszczamy różne nazwy
+                    content = stmt.get('content', {}) if isinstance(stmt, dict) else {}
+                    has_content = False
+
+                    # Sprawdź flagi i pola tekstowe
+                    if content.get('has_content') or content.get('has_full_content'):
+                        has_content = True
+                    elif content.get('text') and len(str(content.get('text')).strip()) > 20:
+                        has_content = True
+                    elif content.get('text_content') and len(str(content.get('text_content')).strip()) > 20:
+                        has_content = True
+                    elif content.get('html_content') and len(str(content.get('html_content')).strip()) > 50:
+                        has_content = True
+
+                    if has_content:
+                        statements_to_save.append(stmt)
+
+            else:
+                # Fallback: zbuduj dane z podstawowych statement_data (jak wcześniej),
+                # ale nie zapisuj tych bez treści
+                if 'statements' in statements_data:
+                    for statement in statements_data['statements']:
+                        statement_num = statement.get('num')
+                        # Nie mamy treści, więc pomijamy (nie gromadzimy samych metadanych)
+                        continue
+
+            # Jeśli nic do zapisania — log i zwróć None (nie zapisujemy pustych metadanych)
+            if not statements_to_save:
+                logger.info(f"Brak wypowiedzi z treścią dla {date} — nie zapisuję pliku {filename}")
+                return None
+
+            # Zbuduj strukturę finalną używając statements_to_save
             transcript_data = {
                 "metadata": {
                     "term": term,
@@ -142,58 +179,30 @@ class FileOperationsImpl:
                 "statements": []
             }
 
-            # Przetwarzamy wypowiedzi
-            if 'statements' in statements_data:
-                full_statements_dict = {}
-                if full_statements:
-                    # Tworzymy mapę pełnych wypowiedzi dla szybkiego dostępu
-                    full_statements_dict = {stmt.get('num'): stmt for stmt in full_statements}
+            for stmt in statements_to_save:
+                # Zachowaj pełną strukturę przekazaną przez scraper
+                transcript_data['statements'].append(stmt)
 
-                for statement in statements_data['statements']:
-                    statement_num = statement.get('num')
+            # Sortuj i zapisz atomowo
+            transcript_data['statements'].sort(key=lambda x: x.get('num', 0))
 
-                    # Łączymy podstawowe dane z pełną treścią
-                    full_statement = full_statements_dict.get(statement_num, {})
-
-                    processed_statement = {
-                        "num": statement_num,
-                        "speaker": {
-                            "name": statement.get('name', 'Nieznany'),
-                            "function": statement.get('function', ''),
-                            "club": statement.get('club', ''),
-                            "first_name": statement.get('firstName', ''),
-                            "last_name": statement.get('lastName', '')
-                        },
-                        "timing": {
-                            "start_datetime": statement.get('startDateTime', ''),
-                            "end_datetime": statement.get('endDateTime', ''),
-                            "duration_seconds": self._calculate_duration(
-                                statement.get('startDateTime'),
-                                statement.get('endDateTime')
-                            )
-                        },
-                        "content": {
-                            "text": full_statement.get('text', ''),
-                            "has_full_content": bool(full_statement.get('text')),
-                            "content_source": "api" if full_statement.get('text') else "not_available"
-                        },
-                        "technical": {
-                            "api_url": f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts/{statement_num}",
-                            "original_data": statement  # zachowujemy oryginalne dane dla referencji
-                        }
-                    }
-
-                    transcript_data["statements"].append(processed_statement)
-
-            # Sortujemy wypowiedzi według numeru
-            transcript_data["statements"].sort(key=lambda x: x.get("num", 0))
-
-            # Zapisujemy do pliku
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(transcript_data, f, ensure_ascii=False, indent=2, default=str)
+            # Zapis atomowy: najpierw do pliku tymczasowego
+            fd, tmp_path = tempfile.mkstemp(prefix=filename, dir=str(transcripts_dir))
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(transcript_data, f, ensure_ascii=False, indent=2, default=str)
+                # atomic replace
+                os.replace(tmp_path, str(filepath))
+            except Exception:
+                # cleanup temp file
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+                raise
 
             logger.info(
-                f"Zapisano transkrypty dla {date}: {len(transcript_data['statements'])} wypowiedzi -> {filepath}")
+                f"Zapisano transkrypty (tylko z treścią) dla {date}: {len(transcript_data['statements'])} wypowiedzi -> {filepath}")
             return str(filepath)
 
         except Exception as e:

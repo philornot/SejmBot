@@ -10,6 +10,7 @@ Główne poprawki:
 import logging
 import re
 import time
+import random
 from typing import List, Dict, Optional, Any
 
 import requests
@@ -38,7 +39,14 @@ class SejmAPIClient:
             'Connection': 'keep-alive'
         })
 
+        logger.info(f"Zainicjalizowano SejmAPIClient")
+        logger.debug(f"Base URL: {self.base_url}")
+        logger.debug(f"Cache: {'włączony' if cache_manager else 'wyłączony'}")
         self.cache = cache_manager
+
+        # Backoff config
+        self.min_backoff = float(self.config.get('min_backoff', 0.5))
+        self.max_backoff = float(self.config.get('max_backoff', 30.0))
 
         logger.info(f"Zainicjalizowano SejmAPIClient")
         logger.debug(f"Base URL: {self.base_url}")
@@ -46,7 +54,7 @@ class SejmAPIClient:
 
     def _make_request(self, endpoint: str, params: Optional[Dict] = None,
                       use_cache: bool = True, retry_count: int = 2,
-                      expected_content_type: str = None) -> Optional[Any]:
+                      expected_content_type: Optional[str] = None) -> Optional[Any]:
         """
         NAPRAWIONA metoda wykonująca zapytanie do API
         """
@@ -60,14 +68,14 @@ class SejmAPIClient:
                 logger.debug(f"Cache hit: {endpoint}")
                 return cached_data
 
-        # Retry logic
+        # Retry / backoff logic with jitter and handling Retry-After
         for attempt in range(retry_count):
             try:
                 if attempt > 0:
                     logger.debug(f"Próba {attempt + 1}/{retry_count} dla {endpoint}")
-                    time.sleep(1)  # Opóźnienie przed retry
 
-                time.sleep(self.request_delay)  # Rate limiting
+                # Rate limiting small pause
+                time.sleep(self.request_delay)
 
                 response = self.session.get(url, params=params, timeout=self.request_timeout)
 
@@ -75,23 +83,37 @@ class SejmAPIClient:
                 logger.debug(
                     f"Status: {response.status_code}, Content-Type: {response.headers.get('content-type', 'unknown')}")
 
-                # Obsługa błędów HTTP
-                if response.status_code == 404:
-                    logger.debug(f"404 Not Found: {url}")
+                # Handle common HTTP response codes
+                if response.status_code in (403, 404):
+                    logger.debug(f"{response.status_code} dla {url}")
                     return None
-                elif response.status_code == 403:
-                    logger.debug(f"403 Forbidden: {url}")
-                    return None
-                elif response.status_code == 429:
-                    logger.warning(f"429 Too Many Requests: {url}")
+
+                if response.status_code == 429:
+                    # Respect Retry-After header if present
+                    retry_after = response.headers.get('Retry-After') or response.headers.get('retry-after')
+                    try:
+                        wait = float(retry_after) if retry_after else None
+                    except Exception:
+                        wait = None
+
+                    if wait is None:
+                        # exponential backoff with jitter
+                        wait = min(self.max_backoff, self.min_backoff * (2 ** attempt))
+                        wait = wait + random.random()
+
+                    logger.warning(f"429 Too Many Requests: {url} - retry after {wait}s")
                     if attempt < retry_count - 1:
-                        time.sleep(5)
+                        time.sleep(wait)
                         continue
                     return None
-                elif response.status_code >= 500:
-                    logger.warning(f"Server Error {response.status_code}: {url}")
+
+                if response.status_code >= 500:
+                    # server error - backoff and retry
+                    wait = min(self.max_backoff, self.min_backoff * (2 ** attempt))
+                    wait = wait + random.random()
+                    logger.warning(f"Server Error {response.status_code}: {url} - retrying in {wait}s")
                     if attempt < retry_count - 1:
-                        time.sleep(2)
+                        time.sleep(wait)
                         continue
                     return None
 
@@ -468,36 +490,54 @@ class SejmAPIClient:
 
                 if test_proceeding and test_date:
                     proc_id = test_proceeding.get('number')
-                    logger.info(f"Testowanie stenogramów z posiedzenia {proc_id}, dnia {test_date}")
 
-                    # Test listy wypowiedzi
-                    statements = self.get_transcripts_list(10, proc_id, test_date)
-                    if statements and statements.get('statements'):
-                        test_results['statements_working'] = True
-                        test_results['total_score'] += 1
-                        logger.info(f"✓ Lista wypowiedzi działa ({len(statements['statements'])} wypowiedzi)")
-
-                        # Test 5: NAJWAŻNIEJSZY - Test pobierania treści HTML
-                        first_statements = statements['statements'][:3]  # Test pierwszych 3
-                        successful_html = 0
-
-                        for stmt in first_statements:
-                            stmt_num = stmt.get('num')
-                            if stmt_num is not None:
-                                html_content = self.get_statement_html(10, proc_id, test_date, stmt_num)
-                                if html_content and len(html_content.strip()) > 50:
-                                    successful_html += 1
-
-                        if successful_html > 0:
-                            test_results['html_content_working'] = True
-                            test_results['total_score'] += 1
-                            logger.info(
-                                f"✓ Pobieranie treści HTML działa ({successful_html}/{len(first_statements)} testów)")
-                        else:
-                            test_results['errors'].append("Nie można pobrać treści HTML wypowiedzi")
-                            logger.error("✗ Pobieranie treści HTML nie działa")
+                    # Normalizuj i sprawdź proc_id zanim przekażemy je dalej
+                    try:
+                        if proc_id is None:
+                            raise ValueError("proc_id is None")
+                        if not isinstance(proc_id, int):
+                            proc_id = int(proc_id)
+                    except Exception as e:
+                        logger.warning(f"Nieprawidłowy identyfikator posiedzenia: {proc_id} ({e})")
+                        test_results['errors'].append("Nieprawidłowy identyfikator posiedzenia do testów")
                     else:
-                        test_results['errors'].append("Brak wypowiedzi w stenogramie")
+                        logger.info(f"Testowanie stenogramów z posiedzenia {proc_id}, dnia {test_date}")
+
+                        # Test listy wypowiedzi
+                        statements = self.get_transcripts_list(10, proc_id, test_date)
+                        if statements and statements.get('statements'):
+                            test_results['statements_working'] = True
+                            test_results['total_score'] += 1
+                            logger.info(f"✓ Lista wypowiedzi działa ({len(statements['statements'])} wypowiedzi)")
+
+                            # Test 5: NAJWAŻNIEJSZY - Test pobierania treści HTML
+                            first_statements = statements['statements'][:3]  # Test pierwszych 3
+                            successful_html = 0
+
+                            for stmt in first_statements:
+                                stmt_num = stmt.get('num')
+                                if stmt_num is not None:
+                                    # Normalizuj numer wypowiedzi
+                                    try:
+                                        if not isinstance(stmt_num, int):
+                                            stmt_num = int(stmt_num)
+                                    except Exception:
+                                        continue
+
+                                    html_content = self.get_statement_html(10, proc_id, test_date, stmt_num)
+                                    if html_content and len(html_content.strip()) > 50:
+                                        successful_html += 1
+
+                            if successful_html > 0:
+                                test_results['html_content_working'] = True
+                                test_results['total_score'] += 1
+                                logger.info(
+                                    f"✓ Pobieranie treści HTML działa ({successful_html}/{len(first_statements)} testów)")
+                            else:
+                                test_results['errors'].append("Nie można pobrać treści HTML wypowiedzi")
+                                logger.error("✗ Pobieranie treści HTML nie działa")
+                        else:
+                            test_results['errors'].append("Brak wypowiedzi w stenogramie")
                 else:
                     test_results['errors'].append("Brak posiedzeń z przeszłości do testowania")
             else:

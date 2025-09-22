@@ -49,6 +49,8 @@ class SejmScraper:
             'statements_with_full_content': 0,  # KLUCZOWA METRYKA
             'content_fetch_attempts': 0,
             'content_fetch_successes': 0,
+            'skipped_no_content': 0,
+            'skipped_due_to_limit': 0,
             'speakers_identified': 0,
             'mp_data_enrichments': 0,
             'errors': 0,
@@ -255,9 +257,6 @@ class SejmScraper:
         """
         KLUCZOWA METODA - wzbogaca wypowiedzi o treść
         """
-        enriched_statements = []
-        successful_fetches = 0
-
         logger.info(f"🎯 ROZPOCZYNAM POBIERANIE TREŚCI dla {len(statements)} wypowiedzi...")
 
         # Możemy ograniczyć liczbę wypowiedzi do testowania
@@ -267,56 +266,51 @@ class SejmScraper:
         if len(statements_to_process) < len(statements):
             logger.info(f"Ograniczenie do {max_statements} wypowiedzi z {len(statements)}")
 
+        enriched_statements: List[Dict] = []
+        successful_fetches = 0
+        skipped_no_content = 0
+
         for i, statement in enumerate(statements_to_process, 1):
-            enriched_statement = statement.copy()
             statement_num = statement.get('num')
 
             # Wyświetl postęp co 10 wypowiedzi
             if i % 10 == 0:
                 logger.info(f"Postęp: {i}/{len(statements_to_process)} ({successful_fetches} z treścią)")
 
-            if statement_num is not None:
-                content_data = self._fetch_statement_content(term, proceeding_id, date, statement_num)
+            if statement_num is None:
+                skipped_no_content += 1
+                self.stats['skipped_no_content'] += 1
+                logger.debug(f"✗ [{i}] Brak numeru wypowiedzi - pomijam")
+                time.sleep(0.05)
+                continue
 
-                if content_data:
-                    enriched_statement['content'] = content_data
-                    successful_fetches += 1
-                    self.stats['statements_with_full_content'] += 1
+            content_data = self._fetch_statement_content(term, proceeding_id, date, statement_num)
 
-                    # Pokaż fragment treści w debug
-                    text_preview = content_data.get('text_content', '')[:100].replace('\n', ' ')
-                    logger.debug(f"✓ [{i}] Treść [{content_data.get('content_length', 0)} zn]: {text_preview}...")
-                else:
-                    enriched_statement['content'] = {
-                        'text_content': '',
-                        'html_content': '',
-                        'has_content': False,
-                        'source': 'fetch_failed',
-                        'error': 'Could not fetch content from API'
-                    }
-                    logger.debug(f"✗ [{i}] Brak treści dla wypowiedzi {statement_num}")
+            if content_data:
+                enriched_statement = statement.copy()
+                enriched_statement['content'] = content_data
+                successful_fetches += 1
+                self.stats['statements_with_full_content'] += 1
+
+                # Pokaż fragment treści w debug
+                text_preview = content_data.get('text_content', '')[:100].replace('\n', ' ')
+                logger.debug(f"✓ [{i}] Treść [{content_data.get('content_length', 0)} zn]: {text_preview}...")
+
+                enriched_statements.append(enriched_statement)
             else:
-                enriched_statement['content'] = {
-                    'text_content': '',
-                    'html_content': '',
-                    'has_content': False,
-                    'source': 'no_statement_num'
-                }
-
-            enriched_statements.append(enriched_statement)
+                skipped_no_content += 1
+                self.stats['skipped_no_content'] += 1
+                logger.debug(f"✗ [{i}] Brak treści dla wypowiedzi {statement_num} - pomijam")
 
             # Małe opóźnienie między pobieraniami
             time.sleep(0.05)
 
-        # Dodaj pozostałe wypowiedzi bez treści jeśli zostały ograniczone
-        for remaining_statement in statements[max_statements:]:
-            remaining_statement['content'] = {
-                'text_content': '',
-                'html_content': '',
-                'has_content': False,
-                'source': 'skipped_due_to_limit'
-            }
-            enriched_statements.append(remaining_statement)
+        # Jeśli ograniczyliśmy liczbę wypowiedzi, zlicz je jako pominięte (nie zapisujemy ich jako metadane)
+        skipped_due_to_limit = 0
+        if len(statements) > max_statements:
+            skipped_due_to_limit = len(statements) - max_statements
+            self.stats['skipped_due_to_limit'] += skipped_due_to_limit
+            logger.debug(f"Pominięto {skipped_due_to_limit} wypowiedzi z powodu limitu")
 
         # Podsumowanie z fokusem na treści
         logger.info(f"🎯 POBRANO TREŚĆ dla {successful_fetches}/{len(statements_to_process)} wypowiedzi")
@@ -579,6 +573,11 @@ class SejmScraper:
                         content_count = sum(1 for s in enriched_statements if s.get('content', {}).get('has_content'))
                         logger.info(
                             f"💾 Zapisano {len(enriched_statements)} wypowiedzi ({content_count} z treścią) do: {saved_path}")
+                    else:
+                        # Nie zapisano bo brak treści — zaktualizuj statystyki i log
+                        logger.info(f"ℹ️ Plik nie został zapisany (brak wypowiedzi z treścią) dla {date}")
+                        # Odejmij zliczone przetworzone wypowiedzi, bo nie zapisujemy metadanych bez treści
+                        # (statements_processed będzie zwiększone dalej poza tym blokiem)
                 except Exception as e:
                     logger.error(f"Błąd zapisywania wypowiedzi dla {date}: {e}")
 
