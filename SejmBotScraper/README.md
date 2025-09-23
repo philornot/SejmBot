@@ -6,10 +6,10 @@ parlamentu.
 
 ## Szybkie instrukcje
 
-- Pracuj w wirtualnym środowisku (venv). Przykład:
+- Pracuj w wirtualnym środowisku (venv).
 
 ```powershell
-venv\Scripts\activate
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -84,19 +84,7 @@ Pliki z transkryptami są zoptymalizowane pod kątem dalszej analizy automatyczn
   - duration_seconds: opcjonalna długość wypowiedzi
   - original: oryginalny, surowy fragment (zachowany dla śledzenia źródła)
 
-Plik zawierany tylko wtedy, gdy są wypowiedzi z treścią. Jeśli pobieranie treści jest wyłączone lub nie znaleziono treści,
-plik nie zostanie utworzony.
-
-## Zależności i środowisko
-
-- Jeśli brakuje pakietów, uruchom:
-
-```powershell
-pip install -r requirements.txt
-```
-
-- Zalecane: używać dedykowanego venv w katalogu projektu (np. `.venv`). Skrypt kontroluje, czy venv jest aktywny i ostrzega
-  jeśli nie został wykryty.
+Jeśli pobieranie treści jest wyłączone lub nie znaleziono treści, plik nie zostanie utworzony.
 
 ## Logowanie i monitoring
 
@@ -115,4 +103,4 @@ pobranych treści, błędy).
 
 ## Licencja
 
-Kod źródłowy jest objęty licencją Apache 2.0 (plik LICENSE w repozytorium).
+Kod źródłowy jest objęty licencją Apache 2.0 (plik [LICENSE](https://github.com/philornot/SejmBot/blob/main/LICENSE) w repozytorium).
