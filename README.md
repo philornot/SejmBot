@@ -101,4 +101,4 @@ Wykorzystuje publiczne transkrypty z posiedzeń Sejmu RP.
 
 #### ej aj?
 
-tak, sejmbot jest rozwijany _przy pomocy_ chatbotów :> (dopóki działa to czemu nie?)\*
+tak, sejmbot jest rozwijany _przy pomocy_ chatbotów :> (dopóki działa to czemu nie?)
