@@ -1,30 +1,56 @@
-# file_manager.py
 """
-Zarządzanie plikami i folderami dla SejmBotScraper
+Implementacja operacji na plikach i folderach
+Bazuje na oryginalnym FileManager z dodatkową funkcjonalnością
 """
 
 import json
 import logging
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
 
-from config import BASE_OUTPUT_DIR
-
 logger = logging.getLogger(__name__)
 
 
-class FileManager:
-    """Zarządzanie strukturą plików i zapisem strukturyzowanych danych wypowiedzi"""
+class FileOperationsImpl:
+    """Implementacja operacji na plikach i folderach dla SejmBotScraper"""
 
-    def __init__(self):
-        self.base_dir = Path(BASE_OUTPUT_DIR)
+    def __init__(self, base_dir: Optional[str] = None):
+        """
+        Inicjalizuje operacje na plikach
+
+        Args:
+            base_dir: katalog bazowy (opcjonalny, domyślnie z konfiguracji)
+        """
+        if base_dir:
+            self.base_dir = Path(base_dir)
+        else:
+            # Domyślnie używamy katalogu, z którego uruchomiono polecenie (CWD).
+            # To upraszcza integrację z CI i uruchomieniami lokalnymi.
+            try:
+                from ..config.settings import get_settings
+                settings = get_settings()
+                cfg_dir = settings.get('scraping.base_output_dir', None)
+                if cfg_dir:
+                    self.base_dir = Path(cfg_dir)
+                else:
+                    self.base_dir = Path.cwd()
+            except Exception:
+                self.base_dir = Path.cwd()
+
         self.ensure_base_directory()
+        logger.debug(f"Zainicjalizowano FileOperationsImpl: {self.base_dir}")
 
     def ensure_base_directory(self):
         """Tworzy główny katalog jeśli nie istnieje"""
-        self.base_dir.mkdir(exist_ok=True)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Upewniono się o istnieniu katalogu: {self.base_dir}")
+
+    def get_base_directory(self) -> Path:
+        """Zwraca katalog bazowy"""
+        return self.base_dir
 
     def get_term_directory(self, term: int) -> Path:
         """
@@ -37,7 +63,7 @@ class FileManager:
             Path do katalogu kadencji
         """
         term_dir = self.base_dir / f"kadencja_{term:02d}"
-        term_dir.mkdir(exist_ok=True)
+        term_dir.mkdir(parents=True, exist_ok=True)
         return term_dir
 
     def get_proceeding_directory(self, term: int, proceeding_id: int, proceeding_info: Dict) -> Path:
@@ -63,7 +89,7 @@ class FileManager:
             proceeding_name += f"_{first_date}"
 
         proceeding_dir = term_dir / proceeding_name
-        proceeding_dir.mkdir(exist_ok=True)
+        proceeding_dir.mkdir(parents=True, exist_ok=True)
 
         logger.debug(f"Utworzono katalog posiedzenia: {proceeding_dir}")
         return proceeding_dir
@@ -82,7 +108,7 @@ class FileManager:
         """
         proceeding_dir = self.get_proceeding_directory(term, proceeding_id, proceeding_info)
         transcripts_dir = proceeding_dir / "transcripts"
-        transcripts_dir.mkdir(exist_ok=True)
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
         return transcripts_dir
 
     def save_proceeding_transcripts(self, term: int, proceeding_id: int, date: str,
@@ -107,7 +133,75 @@ class FileManager:
             filename = f"transkrypty_{date}.json"
             filepath = transcripts_dir / filename
 
-            # Tworzymy strukturę danych
+            # Jeśli mamy wzbogacone pełne wypowiedzi, znormalizujmy je do prostego formatu
+            statements_to_save = []
+            if full_statements:
+                for stmt in full_statements:
+                    try:
+                        # Przyjmujemy, że stmt to dict z możliwymi polami:
+                        # 'num', 'speaker' (dict), 'content' lub bezpośrednie 'text'/'html'
+                        num = stmt.get('num') if isinstance(stmt, dict) else None
+
+                        # Wyciągnij informacje o mówcy
+                        speaker = {}
+                        raw_speaker = stmt.get('speaker') if isinstance(stmt, dict) else None
+                        if isinstance(raw_speaker, dict):
+                            speaker = {
+                                'name': raw_speaker.get('name'),
+                                'id': raw_speaker.get('id'),
+                                'is_mp': raw_speaker.get('is_mp') if 'is_mp' in raw_speaker else None,
+                                'club': raw_speaker.get('club') or raw_speaker.get('group')
+                            }
+
+                        # Pobierz możliwy tekst (upraszczamy html->tekst jeśli trzeba)
+                        text = None
+                        content = stmt.get('content') if isinstance(stmt, dict) else {}
+                        if isinstance(content, dict):
+                            # popularne pola
+                            text = content.get('text') or content.get('text_content') or content.get('plain')
+                            if not text and content.get('html_content'):
+                                text = self._html_to_text(str(content.get('html_content')))
+                        else:
+                            # bezpośrednie pola
+                            text = stmt.get('text') or stmt.get('text_content') or stmt.get('html_content')
+                            if text and ('<' in str(text) and '>' in str(text)):
+                                text = self._html_to_text(str(text))
+
+                        if text:
+                            text = str(text).strip()
+
+                        # Metadane czasu i trwania
+                        start = stmt.get('start_time') if isinstance(stmt, dict) else None
+                        end = stmt.get('end_time') if isinstance(stmt, dict) else None
+                        duration = None
+                        if start and end:
+                            duration = self._calculate_duration(start, end)
+
+                        # Pomijamy krótkie/nieistotne treści
+                        if not text or len(text) < 10:
+                            continue
+
+                        canonical = {
+                            'num': num,
+                            'speaker': speaker,
+                            'text': text,
+                            'start_time': start,
+                            'end_time': end,
+                            'duration_seconds': duration,
+                            # zachowajemy oryginalną strukturę na wszelki wypadek
+                            'original': stmt
+                        }
+
+                        statements_to_save.append(canonical)
+                    except Exception as e:
+                        logger.debug(f"Pominięto wypowiedź przy normalizacji: {e}")
+
+            # Jeśli nic do zapisania — log i zwróć None (nie zapisujemy pustych plików)
+            if not statements_to_save:
+                logger.info(f"Brak wypowiedzi z treścią dla {date} — nie zapisuję pliku {filename}")
+                return None
+
+            # Zbuduj strukturę finalną używając statements_to_save
             transcript_data = {
                 "metadata": {
                     "term": term,
@@ -123,58 +217,38 @@ class FileManager:
                 "statements": []
             }
 
-            # Przetwarzamy wypowiedzi
-            if 'statements' in statements_data:
-                full_statements_dict = {}
-                if full_statements:
-                    # Tworzymy mapę pełnych wypowiedzi dla szybkiego dostępu
-                    full_statements_dict = {stmt.get('num'): stmt for stmt in full_statements}
+            for stmt in statements_to_save:
+                # Zapisujemy znormalizowaną strukturę (ułatwia analizę w detektorze)
+                transcript_data['statements'].append({
+                    'num': stmt.get('num'),
+                    'speaker': stmt.get('speaker', {}),
+                    'text': stmt.get('text'),
+                    'start_time': stmt.get('start_time'),
+                    'end_time': stmt.get('end_time'),
+                    'duration_seconds': stmt.get('duration_seconds'),
+                    'original': stmt.get('original')
+                })
 
-                for statement in statements_data['statements']:
-                    statement_num = statement.get('num')
+            # Sortuj i zapisz atomowo
+            transcript_data['statements'].sort(key=lambda x: x.get('num', 0))
 
-                    # Łączymy podstawowe dane z pełną treścią
-                    full_statement = full_statements_dict.get(statement_num, {})
-
-                    processed_statement = {
-                        "num": statement_num,
-                        "speaker": {
-                            "name": statement.get('name', 'Nieznany'),
-                            "function": statement.get('function', ''),
-                            "club": statement.get('club', ''),
-                            "first_name": statement.get('firstName', ''),
-                            "last_name": statement.get('lastName', '')
-                        },
-                        "timing": {
-                            "start_datetime": statement.get('startDateTime', ''),
-                            "end_datetime": statement.get('endDateTime', ''),
-                            "duration_seconds": self._calculate_duration(
-                                statement.get('startDateTime'),
-                                statement.get('endDateTime')
-                            )
-                        },
-                        "content": {
-                            "text": full_statement.get('text', ''),
-                            "has_full_content": bool(full_statement.get('text')),
-                            "content_source": "api" if full_statement.get('text') else "not_available"
-                        },
-                        "technical": {
-                            "api_url": f"/sejm/term{term}/proceedings/{proceeding_id}/{date}/transcripts/{statement_num}",
-                            "original_data": statement  # zachowujemy oryginalne dane dla referencji
-                        }
-                    }
-
-                    transcript_data["statements"].append(processed_statement)
-
-            # Sortujemy wypowiedzi według numeru
-            transcript_data["statements"].sort(key=lambda x: x.get("num", 0))
-
-            # Zapisujemy do pliku
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(transcript_data, f, ensure_ascii=False, indent=2, default=str)
+            # Zapis atomowy: najpierw do pliku tymczasowego
+            fd, tmp_path = tempfile.mkstemp(prefix=filename, dir=str(transcripts_dir))
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(transcript_data, f, ensure_ascii=False, indent=2, default=str)
+                # atomic replace
+                os.replace(tmp_path, str(filepath))
+            except Exception:
+                # cleanup temp file
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+                raise
 
             logger.info(
-                f"Zapisano transkrypty dla {date}: {len(transcript_data['statements'])} wypowiedzi -> {filepath}")
+                f"Zapisano transkrypty (tylko z treścią) dla {date}: {len(transcript_data['statements'])} wypowiedzi -> {filepath}")
             return str(filepath)
 
         except Exception as e:
@@ -205,6 +279,25 @@ class FileManager:
         except Exception as e:
             logger.debug(f"Nie można obliczyć czasu trwania: {e}")
             return None
+
+    def _html_to_text(self, html: str) -> str:
+        """Proste czyszczenie HTML -> tekst zwykły.
+
+        Nie używamy zewnętrznych zależności; proste zastąpienia i usunięcie tagów
+        wystarczą do analizy treści w detektorze.
+        """
+        try:
+            import re
+
+            text = re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+            text = re.sub(r'<[^>]+>', ' ', text)
+            # podstawowe encje
+            text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+            text = re.sub(r'\s+', ' ', text)
+            return text.strip()
+        except Exception:
+            return html
 
     def save_proceeding_info(self, term: int, proceeding_id: int, proceeding_info: Dict) -> Optional[str]:
         """
@@ -273,23 +366,6 @@ class FileManager:
             logger.error(f"Błąd sprawdzania istniejących transkryptów: {e}")
             return []
 
-    def load_transcript_file(self, filepath: str) -> Optional[Dict]:
-        """
-        Ładuje plik transkryptu
-
-        Args:
-            filepath: ścieżka do pliku
-
-        Returns:
-            Dane transkryptu lub None w przypadku błędu
-        """
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Błąd wczytywania transkryptu {filepath}: {e}")
-            return None
-
     def get_proceeding_summary(self, term: int, proceeding_id: int, proceeding_info: Dict) -> Dict:
         """
         Tworzy podsumowanie posiedzenia na podstawie zapisanych transkryptów
@@ -316,8 +392,11 @@ class FileManager:
             }
 
             if transcripts_dir.exists():
+                from .data_serializers import DataSerializersImpl
+                serializer = DataSerializersImpl()
+
                 for file in transcripts_dir.glob("transkrypty_*.json"):
-                    transcript_data = self.load_transcript_file(str(file))
+                    transcript_data = serializer.load_json(file)
                     if transcript_data:
                         summary["total_days"] += 1
                         summary["total_statements"] += len(transcript_data.get("statements", []))

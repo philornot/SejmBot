@@ -1,462 +1,484 @@
 #!/usr/bin/env python3
-# main.py
 """
-SejmBot Scraper - Główny entry-point
-
-Narzędzie do pobierania wypowiedzi z posiedzeń Sejmu RP
-bez pobierania PDF-ów - tylko przez API JSON/HTML.
-Z zaawansowaną obsługą cache dla wydajności.
+WERSJA DEBUG - main.py z dodatkowymi logami i timeoutem
+Znajdzie miejsce, w którym program może się zawiesić
 """
 
 import argparse
 import logging
 import sys
+import concurrent.futures
+import functools
 from pathlib import Path
+from typing import Optional
 
-from config import LOG_LEVEL, LOG_FORMAT, LOGS_DIR, DEFAULT_TERM
-from scraper import SejmScraper
+# Dodaj katalog główny do PYTHONPATH
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+logger = logging.getLogger(__name__)
 
 
-def setup_logging(verbose: bool = False, log_file: str = None):
+"""Obsługa limitu czasu (cross-platform).
+
+Zamiast używać mechanizmu sygnałów (SIGALRM), który nie jest dostępny na
+Windows, korzystamy z ThreadPoolExecutor i metody future.result(timeout=...).
+Jeśli wywołanie funkcji przekroczy limit czasu, wypisujemy komunikat i
+zwracamy None.
+"""
+
+
+def with_timeout(seconds):
+    """Dekorator ustawiający limit czasu dla wywołań funkcji (cross-platform).
+
+    Parametry:
+      seconds (int): limit czasu w sekundach
+
+    Zwraca None i wypisuje komunikat w przypadku przekroczenia limitu.
     """
-    Konfiguruje system logowania
 
-    Args:
-        verbose: czy wyświetlać szczegółowe logi
-        log_file: ścieżka do pliku z logami (opcjonalne)
-    """
-    level = logging.DEBUG if verbose else getattr(logging, LOG_LEVEL.upper())
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(func, *args, **kwargs)
+                try:
+                    return future.result(timeout=seconds)
+                except concurrent.futures.TimeoutError:
+                    print(
+                        f"\n⏰ TIMEOUT - operacja '{func.__name__}' przekroczyła {seconds} sekund"
+                    )
+                    return None
 
-    # Usuń istniejące handlery żeby uniknąć duplikatów
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
+        return wrapper
 
-    # Konfiguracja podstawowa - handler konsoli
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-    console_formatter = logging.Formatter(LOG_FORMAT)
-    console_handler.setFormatter(console_formatter)
-
-    # Lista handlerów
-    handlers = [console_handler]
-
-    # Dodaj handler pliku jeśli podano
-    if log_file:
-        # Upewnij się, że katalog logs istnieje
-        logs_path = Path(LOGS_DIR)
-        logs_path.mkdir(exist_ok=True)
-
-        log_file_path = logs_path / log_file
-
-        try:
-            file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
-            file_handler.setLevel(level)
-            file_formatter = logging.Formatter(LOG_FORMAT)
-            file_handler.setFormatter(file_formatter)
-            handlers.append(file_handler)
-
-            print(f"Logi będą zapisywane do: {log_file_path.absolute()}")
-
-        except Exception as e:
-            print(f"Ostrzeżenie: Nie można utworzyć pliku logów {log_file_path}: {e}")
-            print("Kontynuję tylko z logowaniem do konsoli.")
-
-    # Konfiguruj logger podstawowy z handlerami
-    root_logger.setLevel(level)
-    for handler in handlers:
-        root_logger.addHandler(handler)
+    return decorator
 
 
 def print_banner():
     """Wyświetla banner aplikacji"""
-    banner = """
-╔══════════════════════════════════════════════════════════════╗
-║                    SejmBot Scraper                           ║
-║                                                              ║
-║            Pobieranie wypowiedzi z Sejmu RP                  ║
-║                  (bez PDF-ów, tylko API)                     ║
-║                      Wersja 1.0.0                            ║
-╚══════════════════════════════════════════════════════════════╝
+    banner = f"""
+╔══════════════════════════════════════════════════════════════════╗
+║                    SejmBot Scraper v3.1 DEBUG                   ║
+║                                                                  ║
+║           POBIERANIE TREŚCI WYPOWIEDZI Z SEJMU RP                ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
     """
     print(banner)
 
 
-def print_term_info(scraper, term):
-    """Wyświetla informacje o kadencji"""
-    try:
-        # Pobierz informacje o kadencji
-        term_info = scraper.api.get_term_info(term)
-        if term_info:
-            print(f"📅 Kadencja {term}: {term_info.get('from', '')} - {term_info.get('to', 'obecna')}")
-
-        # Pobierz podsumowanie posiedzeń
-        summary = scraper.get_term_proceedings_summary(term)
-        if summary:
-            total = len(summary)
-            future = sum(1 for p in summary if p.get('is_future', False))
-            current = sum(1 for p in summary if p.get('current', False))
-
-            print(f"🏛️  Posiedzenia: {total} ogółem")
-            if future > 0:
-                print(f"⭐  Przyszłe: {future}")
-            if current > 0:
-                print(f"🔄 Bieżące: {current}")
-
-    except Exception as e:
-        logging.warning(f"Nie można pobrać informacji o kadencji: {e}")
-
-
-def print_cache_stats(scraper: SejmScraper):
-    """Wyświetla szczegółowe statystyki cache"""
-    stats = scraper.get_cache_stats()
-
-    print("\n" + "=" * 60)
-    print("📊 STATYSTYKI CACHE")
-    print("=" * 60)
-
-    # API Cache
-    api_stats = stats['api_cache']
-    print(f"🔌 API Cache:")
-    print(f"   Łączne wpisy: {api_stats['total_entries']}")
-    print(f"   Wygasłe: {api_stats['expired']}")
-    print(f"   Przestarzałe (1h): {api_stats['stale_1h']}")
-    print(f"   Przestarzałe (24h): {api_stats['stale_24h']}")
-
-    # File Cache
-    file_stats = stats['file_cache']
-    print(f"\n📄 File Cache:")
-    print(f"   Łączne wpisy: {file_stats['total_entries']}")
-    print(f"   Pliki istnieją: {file_stats['files_exist']}")
-    print(f"   Brakujące pliki: {file_stats['files_missing']}")
-
-    # Disk usage
-    disk_stats = stats['disk_usage']
-    print(f"\n💾 Użycie dysku:")
-    print(f"   Rozmiar cache: {disk_stats['cache_dir_size_mb']:.2f} MB")
-
-    # Recommendations
-    print(f"\n💡 Rekomendacje:")
-    if api_stats['expired'] > 0:
-        print(f"   • Uruchom --cleanup-cache aby usunąć {api_stats['expired']} wygasłych wpisów")
-
-    if file_stats['files_missing'] > 0:
-        print(
-            f"   • {file_stats['files_missing']} plików z cache nie istnieje - cache zostanie automatycznie wyczyszczony")
-
-    if disk_stats['cache_dir_size_mb'] > 100:
-        print(f"   • Cache zajmuje dużo miejsca - rozważ --cleanup-cache")
-
-    print("=" * 60)
-
-
 def create_cli_parser():
-    """Tworzy parser argumentów CLI z obsługą cache"""
+    """Tworzy parser argumentów CLI"""
     parser = argparse.ArgumentParser(
-        description="SejmBot Scraper - pobiera wypowiedzi z posiedzeń Sejmu RP (bez PDF-ów)",
+        description="SejmBot Scraper v3.1 DEBUG - znajdź gdzie się zawiesza",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Przykłady użycia:
-  %(prog)s                              # pobierz całą 10. kadencję (tylko wypowiedzi)
-  %(prog)s -t 9                         # pobierz 9. kadencję 
-  %(prog)s -t 10 -p 15                  # pobierz konkretne posiedzenie 15
-  %(prog)s -t 10 --no-full-text         # bez pełnej treści wypowiedzi (szybciej)
-  %(prog)s --list-terms                 # wyświetl dostępne kadencje
-  %(prog)s -t 10 --summary              # podsumowanie posiedzeń bez pobierania
-  %(prog)s -v --log-file scraper.log    # verbose z zapisem do pliku
-
-Zarządzanie cache:
-  %(prog)s --cache-stats                # pokaż statystyki cache
-  %(prog)s --clear-cache                # wyczyść cache
-  %(prog)s --cleanup-cache              # wyczyść stare wpisy z cache
-  %(prog)s --force                      # wymuś pobieranie (omiń cache)
-  %(prog)s --dry-run                    # tryb testowy - nie zapisuj danych
-
-UWAGA: Program pobiera tylko wypowiedzi przez API (JSON/HTML).
-       Nie pobiera PDF-ów stenogramów.
-        """
     )
 
-    # Główne opcje
     parser.add_argument(
-        '-t', '--term',
+        "-t", "--term", type=int, default=10, help="Numer kadencji (domyślnie 10)"
+    )
+    parser.add_argument(
+        "-p", "--proceeding", type=int, help="Numer konkretnego posiedzenia"
+    )
+    parser.add_argument(
+        "--max-proceedings",
         type=int,
-        default=DEFAULT_TERM,
-        help=f'Numer kadencji (domyślnie: {DEFAULT_TERM})'
+        default=1,
+        help="Maksymalna liczba posiedzeń (domyślnie 1)",
+    )
+    parser.add_argument(
+        "--test-content", action="store_true", help="Test pobierania treści"
+    )
+    parser.add_argument("--health", action="store_true", help="Sprawdź stan systemu")
+    parser.add_argument("--debug", action="store_true", help="Debug mode")
+    parser.add_argument(
+        "--timeout", type=int, default=60, help="Timeout w sekundach (domyślnie 60)"
     )
 
+    # Production-oriented options
+    parser.add_argument("--bulk", action="store_true", help="Production: scrape a whole term (bulk)")
     parser.add_argument(
-        '-p', '--proceeding',
-        type=int,
-        help='Numer konkretnego posiedzenia do pobrania'
-    )
-
-    # Opcje pobierania
-    parser.add_argument(
-        '--no-full-text',
-        action='store_true',
-        help='Nie pobieraj pełnej treści wypowiedzi (tylko podstawowe metadane)'
-    )
-
-    parser.add_argument(
-        '--force',
-        action='store_true',
-        help='Wymuś pobieranie - omiń cache i pobierz wszystko ponownie'
-    )
-
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Tryb testowy - nie zapisuj danych, tylko pokaż co byłoby robione'
-    )
-
-    # Opcje cache
-    parser.add_argument(
-        '--clear-cache',
-        action='store_true',
-        help='Wyczyść cache API i plików'
-    )
-
-    parser.add_argument(
-        '--cache-stats',
-        action='store_true',
-        help='Wyświetl statystyki cache'
-    )
-
-    parser.add_argument(
-        '--cleanup-cache',
-        action='store_true',
-        help='Wyczyść stare i wygasłe wpisy z cache'
-    )
-
-    parser.add_argument(
-        '--cache-type',
-        choices=['api', 'files', 'all'],
-        default='all',
-        help='Typ cache do wyczyszczenia (używane z --clear-cache)'
-    )
-
-    # Opcje informacyjne
-    parser.add_argument(
-        '--list-terms',
-        action='store_true',
-        help='Wyświetl dostępne kadencje i zakończ'
-    )
-
-    parser.add_argument(
-        '--summary',
-        action='store_true',
-        help='Wyświetl podsumowanie posiedzeń bez pobierania danych'
-    )
-
-    # Opcje logowania
-    parser.add_argument(
-        '-v', '--verbose',
-        action='store_true',
-        help='Szczegółowe logi (DEBUG level)'
-    )
-
-    parser.add_argument(
-        '--log-file',
+        "--output-dir",
         type=str,
-        help='Zapisuj logi do pliku (w katalogu logs/)'
+        help="Zastąp katalog wyjściowy dla zebranych danych",
+    )
+    parser.add_argument(
+        "--fetch-full-statements",
+        action="store_true",
+        help="Upewnij się, że pobierana jest pełna treść wyciągu",
+    )
+    parser.add_argument(
+        "--concurrent-downloads",
+        type=int,
+        default=3,
+        help="Liczba jednoczesnych pobrań w trybie masowym",
+    )
+    parser.add_argument(
+        "--ignore-venv",
+        action="store_true",
+        help="Zignoruj sprawdzenie aktywnego virtualenv",
     )
 
     return parser
 
 
-def main():
-    """Główna funkcja programu"""
-    parser = create_cli_parser()
-    args = parser.parse_args()
+def setup_logging_debug():
+    """Konfiguruje szczegółowe logowanie"""
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+    print("🔍 Włączono szczegółowe debugowanie")
 
-    # Konfiguruj logowanie przed jakąkolwiek operacją
-    setup_logging(args.verbose, args.log_file)
 
-    logger = logging.getLogger(__name__)
+def setup_production_logging(settings=None, log_file: Optional[str] = None):
+    """Konfiguracja logowania dla produkcji (używa core.setup_logging gdy dostępne)."""
+    try:
+        from SejmBotScraper.core import setup_logging
 
-    # Sprawdź czy to tylko operacje na cache lub informacyjne
-    cache_only_operations = [args.clear_cache, args.cache_stats, args.cleanup_cache]
-    info_only_operations = [args.list_terms, args.summary]
+        level = logging.INFO
+        if settings:
+            try:
+                lv = settings.get('logging.level')
+                level = getattr(logging, lv.value) if hasattr(lv, 'value') else getattr(logging, str(lv).upper(), logging.INFO)
+            except Exception:
+                level = logging.INFO
 
-    # Wyświetl banner tylko dla głównych operacji
-    if not any(cache_only_operations + info_only_operations):
-        print_banner()
+        setup_logging(level=level, log_file=log_file)
+    except Exception:
+        # Fallback
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+
+def check_dependencies() -> bool:
+    """Szybkie sprawdzenie wymaganych pakietów środowiska.
+
+    Zwraca True gdy wymagane pakiety są dostępne. W przeciwnym wypadku
+    wypisuje instrukcję instalacji i zwraca False.
+    """
+    missing = []
+    try:
+        # Bezpieczne użycie importlib.util
+        from importlib import util as importlib_util
+
+        for pkg in ('requests', 'schedule'):
+            if importlib_util.find_spec(pkg) is None:
+                missing.append(pkg)
+    except Exception:
+        # Jeśli importlib.util nie jest dostępny, pomiń sprawdzenie
+        pass
+
+    if missing:
+        print("❌ Brakuje wymaganych pakietów:", ", ".join(missing))
+        print("Zainstaluj je uruchamiając:")
+        print("  python -m pip install -r SejmBotScraper/requirements.txt")
+        return False
+
+    return True
+
+
+def check_venv_active() -> bool:
+    r"""Sprawdza czy virtualenv jest aktywny.
+
+    Dla PowerShell (Windows) zwykle trzeba uruchomić:
+      .\.venv\Scripts\activate
+
+    Zwraca True jeśli wirtualne środowisko wygląda na aktywne, False w przeciwnym wypadku.
+    """
+
+    # Jeśli sys.prefix różni się od systemowego, najpewniej venv jest aktywny
+    try:
+        import sys as _sys
+
+        base_prefix = getattr(_sys, 'base_prefix', None) or getattr(_sys, 'real_prefix', None)
+        prefix = getattr(_sys, 'prefix', None)
+        if prefix and base_prefix and prefix != base_prefix:
+            return True
+
+        # Dodatkowo sprawdź standardowe location .venv/Scripts/Activate.ps1
+        venv_marker = Path('.venv') / 'Scripts' / 'Activate.ps1'
+        if venv_marker.exists() and ('.venv' in Path(_sys.executable).as_posix()):
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
+@with_timeout(30)  # 30 sekund na import
+def debug_imports():
+    """Testuje importy z timeoutem"""
+    print("🔧 KROK 1: Testowanie importów...")
 
     try:
-        # Utwórz scraper
-        scraper = SejmScraper(force_refresh=args.force)
+        print("  - Importowanie core...")
+        from SejmBotScraper.core import create_scraper, get_version_info
 
-        if args.dry_run:
-            print("🧪 TRYB TESTOWY - nie będą zapisywane żadne dane")
+        print("  ✅ Core zaimportowany")
 
-        # === OPERACJE TYLKO NA CACHE ===
-        if args.clear_cache:
-            print(f"🧹 Czyszczenie cache ({args.cache_type})...")
-            scraper.clear_cache(args.cache_type)
-            print("✅ Cache wyczyszczony")
-            return
+        return create_scraper, get_version_info
+    except Exception as e:
+        print(f"  ❌ Błąd importu: {e}")
+        return None, None
 
-        if args.cleanup_cache:
-            print("🧹 Czyszczenie starych wpisów z cache...")
-            scraper.cleanup_cache()
-            print("✅ Stare wpisy usunięte")
-            return
 
-        if args.cache_stats:
-            print_cache_stats(scraper)
-            return
+@with_timeout(30)  # 30 sekund na utworzenie scrapera
+def debug_scraper_creation():
+    """Testuje utworzenie scrapera z timeoutem"""
+    print("🔧 KROK 2: Tworzenie scrapera...")
 
-        # === OPERACJE INFORMACYJNE ===
-        # Lista dostępnych kadencji
-        if args.list_terms:
-            print("📋 Dostępne kadencje:")
-            print("-" * 40)
+    create_scraper, get_version_info = debug_imports()
+    if not create_scraper:
+        return None
 
-            terms = scraper.get_available_terms()
-            if terms:
-                for term in reversed(terms):  # Najnowsze na górze
-                    term_num = term.get('num', '?')
-                    term_from = term.get('from', '')
-                    term_to = term.get('to', 'obecna')
-                    print(f"  Kadencja {term_num}: {term_from} - {term_to}")
-            else:
-                print("  Nie można pobrać listy kadencji")
-            return
+    try:
+        config = {"max_proceedings": 1}
+        print("  - Wywołuję create_scraper...")
+        scraper = create_scraper(config)
+        print("  ✅ Scraper utworzony")
+        return scraper
+    except Exception as e:
+        print(f"  ❌ Błąd utworzenia scrapera: {e}")
+        return None
 
-        # Podsumowanie posiedzeń
-        if args.summary:
-            print(f"📊 Podsumowanie kadencji {args.term}")
-            print("-" * 50)
 
-            print_term_info(scraper, args.term)
+@with_timeout(60)  # 60 sekund na API test
+def debug_api_connection(scraper):
+    """Testuje połączenie API z timeoutem"""
+    print("🔧 KROK 3: Test połączenia API...")
 
-            summary = scraper.get_term_proceedings_summary(args.term)
-            if summary:
-                print(f"\n📄 Lista posiedzeń:")
-                for proc in summary:
-                    number = proc.get('number', '?')
-                    title = proc.get('title', 'Bez tytułu')
-                    dates = ', '.join(proc.get('dates', []))
-                    status = ""
+    try:
+        print("  - Sprawdzanie czy API client istnieje...")
+        if not hasattr(scraper, "api_client") or not scraper.api_client:
+            print("  ❌ Brak API client")
+            return False
 
-                    if proc.get('current'):
-                        status = " [BIEŻĄCE]"
-                    elif proc.get('is_future'):
-                        status = " [PRZYSZŁE]"
+        print("  ✅ API client istnieje")
 
-                    # Skróć tytuł jeśli za długi
-                    if len(title) > 60:
-                        title = title[:57] + "..."
-
-                    print(f"  {number:3d}. {title}")
-                    print(f"       📅 {dates}{status}")
-            else:
-                print("Nie można pobrać listy posiedzeń")
-            return
-
-        # === GŁÓWNE OPERACJE SCRAPOWANIA ===
-
-        # Walidacja parametrów
-        if args.proceeding is not None and args.proceeding <= 0:
-            print(f"Błąd: Numer posiedzenia musi być większy niż 0 (podano: {args.proceeding})")
-            sys.exit(1)
-
-        if args.force:
-            print("⚡ TRYB WYMUSZONY - wszystkie dane zostaną pobrane ponownie")
-
-        logging.info("Rozpoczynanie procesu pobierania wypowiedzi...")
-
-        # Wyświetl info o kadencji
-        print_term_info(scraper, args.term)
-
-        fetch_full_statements = not args.no_full_text
-
-        if fetch_full_statements:
-            print("📄 Będą pobierane pełne treści wypowiedzi (może potrwać dłużej)")
+        print("  - Test pobierania kadencji...")
+        terms = scraper.get_available_terms()
+        if terms:
+            print(f"  ✅ Pobrano {len(terms)} kadencji")
         else:
-            print("⚡ Pobieranie tylko metadanych wypowiedzi (szybszy tryb)")
+            print("  ⚠️ Brak kadencji")
 
-        # Konkretne posiedzenie
-        if args.proceeding:
-            print(f"\n🎯 Pobieranie posiedzenia {args.proceeding} z kadencji {args.term}")
-
-            if not args.dry_run:
-                success = scraper.scrape_specific_proceeding(
-                    args.term,
-                    args.proceeding,
-                    fetch_full_statements
-                )
-
-                if success:
-                    print(f"\n✅ Pomyślnie pobrano posiedzenie {args.proceeding}")
-                else:
-                    print(f"\n❌ Błąd podczas pobierania posiedzenia {args.proceeding}")
-                    sys.exit(1)
-            else:
-                print(f"🧪 Tryb testowy: pobrano by posiedzenie {args.proceeding}")
-
-        # Cała kadencja
-        else:
-            print(f"\n🏛️  Pobieranie całej kadencji {args.term}")
-            print("⏳ To może potrwać kilka minut...")
-
-            if not args.dry_run:
-                stats = scraper.scrape_term(args.term, fetch_full_statements, args.force)
-
-                print(f"\n📊 PODSUMOWANIE POBIERANIA KADENCJI {args.term}")
-                print("=" * 60)
-                print(f"Przetworzone posiedzenia:     {stats['proceedings_processed']}")
-                print(f"Pominięte przyszłe:           {stats['future_proceedings_skipped']}")
-                print(f"Przetworzone wypowiedzi:      {stats['statements_processed']}")
-                print(f"Wypowiedzi z pełną treścią:   {stats['statements_with_full_content']}")
-                print(f"Zidentyfikowani mówcy:        {stats['speakers_identified']}")
-                print(f"Wzbogacenia danymi posłów:    {stats['mp_data_enrichments']}")
-                print(f"Błędy:                        {stats['errors']}")
-                print("=" * 60)
-
-                if stats['errors'] > 0:
-                    print(f"⚠️  Proces zakończony z {stats['errors']} błędami. Sprawdź logi.")
-                    sys.exit(1)
-                else:
-                    print("✅ Proces zakończony pomyślnie!")
-            else:
-                print(f"🧪 Tryb testowy: pobrano by całą kadencję {args.term}")
-
-        # Wyświetl informację o strukturze danych
-        if not args.dry_run:
-            print(f"\n📁 Dane zapisane w: {scraper.file_manager.base_dir}")
-            print("📋 Struktura:")
-            print("   └── kadencja_XX/")
-            print("       ├── posiedzenie_XXX_YYYY-MM-DD/")
-            print("       │   ├── info_posiedzenia.json")
-            print("       │   └── transcripts/")
-            print("       │       └── transkrypty_YYYY-MM-DD.json")
-
-            if not fetch_full_statements:
-                print("\n💡 Wskazówka: Uruchom ponownie bez --no-full-text aby pobrać pełne treści")
-
-        # Wyświetl informacje o cache na koniec (tylko dla głównych operacji)
-        if not any(cache_only_operations + info_only_operations) and not args.dry_run:
-            print("\n💾 Cache info:")
-            cache_stats = scraper.get_cache_stats()
-            print(f"   API: {cache_stats['api_cache']['total_entries']} wpisów")
-            print(f"   Pliki: {cache_stats['file_cache']['total_entries']} wpisów")
-            print("   Użyj --cache-stats aby zobaczyć szczegóły")
-
-    except KeyboardInterrupt:
-        logging.info("Proces przerwany przez użytkownika (Ctrl+C)")
-        print("\n\n⏹️  Proces przerwany przez użytkownika.")
-        sys.exit(1)
+        return True
 
     except Exception as e:
-        logger.error(f"Nieoczekiwany błąd: {e}")
-        logging.exception("Nieoczekiwany błąd programu")
-        print(f"\n❌ Nieoczekiwany błąd: {e}")
-        print("Sprawdź logi dla szczegółów.")
-        sys.exit(1)
+        print(f"  ❌ Błąd API: {e}")
+        return False
 
-    return 0
+
+@with_timeout(120)  # 2 minuty na pobieranie posiedzeń
+def debug_proceedings_fetch(scraper, term):
+    """Testuje pobieranie posiedzeń z timeoutem"""
+    print(f"🔧 KROK 4: Pobieranie posiedzeń kadencji {term}...")
+
+    try:
+        print("  - Wywołuję get_term_proceedings...")
+        proceedings = scraper.get_term_proceedings(term)
+
+        if not proceedings:
+            print("  ❌ Nie można pobrać posiedzeń")
+            return None
+
+        print(f"  ✅ Pobrano {len(proceedings)} posiedzeń")
+        print(f"  📋 Pierwsze 3 posiedzenia:")
+
+        for i, proc in enumerate(proceedings[:3], 1):
+            proc_id = proc.get("number", "?")
+            dates = proc.get("dates", [])
+            print(f"    {i}. Posiedzenie {proc_id} - {len(dates)} dni")
+
+        return proceedings
+
+    except Exception as e:
+        print(f"  ❌ Błąd pobierania posiedzeń: {e}")
+        return None
+
+
+@with_timeout(180)  # 3 minuty na scrapowanie
+def debug_scraping(scraper, term, max_proceedings):
+    """Testuje scrapowanie z timeoutem"""
+    print(f"🔧 KROK 5: Test scrapowania (limit: {max_proceedings} posiedzeń)...")
+
+    try:
+        print("  - Wywołuję scrape_term_statements...")
+        print("  ⏳ To może potrwać do 3 minut...")
+
+        stats = scraper.scrape_term_statements(
+            term=term, max_proceedings=max_proceedings, fetch_full_statements=True
+        )
+
+        print(f"  ✅ Scrapowanie zakończone!")
+        print(f"  📊 Wyniki:")
+        print(f"    - Posiedzenia: {stats.get('proceedings_processed', 0)}")
+        print(f"    - Wypowiedzi: {stats.get('statements_processed', 0)}")
+        print(f"    - Z treścią: {stats.get('statements_with_full_content', 0)}")
+        print(f"    - Błędy: {stats.get('errors', 0)}")
+
+        return stats
+
+    except Exception as e:
+        print(f"  ❌ Błąd scrapowania: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return None
+
+
+def debug_workflow(term, max_proceedings):
+    """Główny workflow debug z krokami"""
+    print("=" * 60)
+    print("🐛 DEBUG WORKFLOW - znajdźmy gdzie się zawiesza")
+    print("=" * 60)
+
+    # KROK 1: Importy
+    scraper = debug_scraper_creation()
+    if not scraper:
+        print("❌ KONIEC - nie można utworzyć scrapera")
+        return False
+
+    # KROK 2: API connection
+    api_ok = debug_api_connection(scraper)
+    if not api_ok:
+        print("❌ KONIEC - problemy z API")
+        return False
+
+    # KROK 3: Pobieranie posiedzeń (tu może być problem)
+    proceedings = debug_proceedings_fetch(scraper, term)
+    if not proceedings:
+        print("❌ KONIEC - nie można pobrać posiedzeń")
+        return False
+
+    # KROK 4: Scrapowanie (tu też może być problem)
+    stats = debug_scraping(scraper, term, max_proceedings)
+    if not stats:
+        print("❌ KONIEC - błąd scrapowania")
+        return False
+
+    print("✅ DEBUG ZAKOŃCZONY - wszystko działa!")
+    return True
+
+
+def main():
+    """Główna funkcja DEBUG"""
+    parser = create_cli_parser()
+    args = vars(parser.parse_args())
+
+    try:
+        # If running in debug mode, keep verbose logging and debug workflow
+        if args.get("debug"):
+            setup_logging_debug()
+        else:
+            # Try to setup production logging (may use settings)
+            try:
+                from SejmBotScraper.config.settings import get_settings
+
+                settings = get_settings()
+            except Exception:
+                settings = None
+
+            setup_production_logging(settings=settings)
+
+        print_banner()
+
+        # Test treści - szybki
+        if args.get("test_content"):
+            print("🧪 SZYBKI TEST TREŚCI")
+            scraper = debug_scraper_creation()
+            if scraper:
+                results = scraper.test_content_fetching(
+                    args.get("term", 10), max_tests=3
+                )
+                success_rate = results.get("success_rate", 0)
+                print(f"Wynik testu: {success_rate:.1f}% sukcesu")
+                return 0 if success_rate > 50 else 1
+            return 1
+
+        # Health check
+        if args.get("health"):
+            print("🏥 HEALTH CHECK")
+            scraper = debug_scraper_creation()
+            if scraper:
+                health = scraper.health_check()
+                print(f"Status: {'ZDROWY' if health.get('healthy') else 'PROBLEMY'}")
+                return 0 if health.get("healthy") else 1
+            return 1
+
+        # Production bulk workflow
+        if args.get("bulk"):
+            # Run production scraper for a term (bulk)
+            term = args.get("term", 10)
+            output_dir = args.get("output_dir")
+            fetch_full = args.get("fetch_full_statements", False)
+            concurrent = args.get("concurrent_downloads", 3)
+
+            # Sprawdź aktywność venv (chyba że użytkownik wymusi ignorowanie)
+            if not args.get('ignore_venv') and not check_venv_active():
+                print("⚠️ Wygląda na to, że virtualenv nie jest aktywny.")
+                print("W PowerShell uruchom:")
+                print("  & .\\.venv\\Scripts\\Activate.ps1")
+                print("Lub uruchom z --ignore-venv jeśli wiesz co robisz.")
+                return 1
+
+            print(f"🚀 TRYB PRODUKCYJNY (bulk) — kadencja={term} katalog_wyj={output_dir}")
+
+            try:
+                from SejmBotScraper.core import create_scraper
+                from SejmBotScraper.config.settings import get_settings
+
+                settings = get_settings()
+                config_override = {}
+                if output_dir:
+                    config_override.setdefault('storage', {})
+                    config_override['storage']['base_directory'] = output_dir
+                config_override.setdefault('scraping', {})
+                config_override['scraping']['fetch_full_statements'] = fetch_full
+                config_override['scraping']['concurrent_downloads'] = concurrent
+
+                scraper = create_scraper(settings.to_dict() if hasattr(settings, 'to_dict') else None, config_override=config_override)
+
+                stats = scraper.scrape_term_statements(term=term, max_proceedings=args.get('max_proceedings', 5), fetch_full_statements=fetch_full)
+
+                print("📈 Production scrape finished")
+                print(f"  - proceedings: {stats.get('proceedings_processed', 0)}")
+                print(f"  - statements: {stats.get('statements_processed', 0)}")
+                print(f"  - with_content: {stats.get('statements_with_full_content', 0)}")
+                print(f"  - errors: {stats.get('errors', 0)}")
+
+                return 0 if stats.get('errors', 0) == 0 else 2
+
+            except Exception as e:
+                logger.exception("Production bulk failed")
+                print(f"❌ Production bulk failed: {e}")
+                return 1
+
+        # Otherwise run debug workflow
+        term = args.get("term", 10)
+        max_proceedings = args.get("max_proceedings", 1)
+        timeout_seconds = args.get("timeout", 60)
+
+        print(f"🐛 DEBUG SCRAPOWANIA")
+        print(f"   Kadencja: {term}")
+        print(f"   Max posiedzeń: {max_proceedings}")
+        print(f"   Timeout: {timeout_seconds}s")
+
+        success = debug_workflow(term, max_proceedings)
+        return 0 if success else 1
+
+    except KeyboardInterrupt:
+        print("\n\n⛔ Proces przerwany przez użytkownika.")
+        return 1
+    except Exception as e:
+        print(f"\n❌ Nieoczekiwany błąd: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return 1
 
 
 if __name__ == "__main__":
-    exit(main())
+    sys.exit(main())

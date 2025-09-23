@@ -9,3 +9,6 @@ SejmBotDetektor/output
 *.env
 
 SejmBotDetektor/data/poslowie.html
+data_sejm
+*.pyc
+data
