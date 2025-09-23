@@ -27,13 +27,18 @@ class FileOperationsImpl:
         if base_dir:
             self.base_dir = Path(base_dir)
         else:
-            # Fallback do domyślnego katalogu
+            # Domyślnie używamy katalogu, z którego uruchomiono polecenie (CWD).
+            # To upraszcza integrację z CI i uruchomieniami lokalnymi.
             try:
                 from ..config.settings import get_settings
                 settings = get_settings()
-                self.base_dir = Path(settings.get('scraping.base_output_dir', './data'))
+                cfg_dir = settings.get('scraping.base_output_dir', None)
+                if cfg_dir:
+                    self.base_dir = Path(cfg_dir)
+                else:
+                    self.base_dir = Path.cwd()
             except Exception:
-                self.base_dir = Path('./data')
+                self.base_dir = Path.cwd()
 
         self.ensure_base_directory()
         logger.debug(f"Zainicjalizowano FileOperationsImpl: {self.base_dir}")
@@ -128,37 +133,70 @@ class FileOperationsImpl:
             filename = f"transkrypty_{date}.json"
             filepath = transcripts_dir / filename
 
-            # Jeśli mamy wzbogacone pełne wypowiedzi, użyjemy ich jako źródła prawdy
+            # Jeśli mamy wzbogacone pełne wypowiedzi, znormalizujmy je do prostego formatu
             statements_to_save = []
             if full_statements:
                 for stmt in full_statements:
-                    # Ujednolicenie pól treści - dopuszczamy różne nazwy
-                    content = stmt.get('content', {}) if isinstance(stmt, dict) else {}
-                    has_content = False
+                    try:
+                        # Przyjmujemy, że stmt to dict z możliwymi polami:
+                        # 'num', 'speaker' (dict), 'content' lub bezpośrednie 'text'/'html'
+                        num = stmt.get('num') if isinstance(stmt, dict) else None
 
-                    # Sprawdź flagi i pola tekstowe
-                    if content.get('has_content') or content.get('has_full_content'):
-                        has_content = True
-                    elif content.get('text') and len(str(content.get('text')).strip()) > 20:
-                        has_content = True
-                    elif content.get('text_content') and len(str(content.get('text_content')).strip()) > 20:
-                        has_content = True
-                    elif content.get('html_content') and len(str(content.get('html_content')).strip()) > 50:
-                        has_content = True
+                        # Wyciągnij informacje o mówcy
+                        speaker = {}
+                        raw_speaker = stmt.get('speaker') if isinstance(stmt, dict) else None
+                        if isinstance(raw_speaker, dict):
+                            speaker = {
+                                'name': raw_speaker.get('name'),
+                                'id': raw_speaker.get('id'),
+                                'is_mp': raw_speaker.get('is_mp') if 'is_mp' in raw_speaker else None,
+                                'club': raw_speaker.get('club') or raw_speaker.get('group')
+                            }
 
-                    if has_content:
-                        statements_to_save.append(stmt)
+                        # Pobierz możliwy tekst (upraszczamy html->tekst jeśli trzeba)
+                        text = None
+                        content = stmt.get('content') if isinstance(stmt, dict) else {}
+                        if isinstance(content, dict):
+                            # popularne pola
+                            text = content.get('text') or content.get('text_content') or content.get('plain')
+                            if not text and content.get('html_content'):
+                                text = self._html_to_text(str(content.get('html_content')))
+                        else:
+                            # bezpośrednie pola
+                            text = stmt.get('text') or stmt.get('text_content') or stmt.get('html_content')
+                            if text and ('<' in str(text) and '>' in str(text)):
+                                text = self._html_to_text(str(text))
 
-            else:
-                # Fallback: zbuduj dane z podstawowych statement_data (jak wcześniej),
-                # ale nie zapisuj tych bez treści
-                if 'statements' in statements_data:
-                    for statement in statements_data['statements']:
-                        statement_num = statement.get('num')
-                        # Nie mamy treści, więc pomijamy (nie gromadzimy samych metadanych)
-                        continue
+                        if text:
+                            text = str(text).strip()
 
-            # Jeśli nic do zapisania — log i zwróć None (nie zapisujemy pustych metadanych)
+                        # Metadane czasu i trwania
+                        start = stmt.get('start_time') if isinstance(stmt, dict) else None
+                        end = stmt.get('end_time') if isinstance(stmt, dict) else None
+                        duration = None
+                        if start and end:
+                            duration = self._calculate_duration(start, end)
+
+                        # Pomijamy krótkie/nieistotne treści
+                        if not text or len(text) < 10:
+                            continue
+
+                        canonical = {
+                            'num': num,
+                            'speaker': speaker,
+                            'text': text,
+                            'start_time': start,
+                            'end_time': end,
+                            'duration_seconds': duration,
+                            # zachowajemy oryginalną strukturę na wszelki wypadek
+                            'original': stmt
+                        }
+
+                        statements_to_save.append(canonical)
+                    except Exception as e:
+                        logger.debug(f"Pominięto wypowiedź przy normalizacji: {e}")
+
+            # Jeśli nic do zapisania — log i zwróć None (nie zapisujemy pustych plików)
             if not statements_to_save:
                 logger.info(f"Brak wypowiedzi z treścią dla {date} — nie zapisuję pliku {filename}")
                 return None
@@ -180,8 +218,16 @@ class FileOperationsImpl:
             }
 
             for stmt in statements_to_save:
-                # Zachowaj pełną strukturę przekazaną przez scraper
-                transcript_data['statements'].append(stmt)
+                # Zapisujemy znormalizowaną strukturę (ułatwia analizę w detektorze)
+                transcript_data['statements'].append({
+                    'num': stmt.get('num'),
+                    'speaker': stmt.get('speaker', {}),
+                    'text': stmt.get('text'),
+                    'start_time': stmt.get('start_time'),
+                    'end_time': stmt.get('end_time'),
+                    'duration_seconds': stmt.get('duration_seconds'),
+                    'original': stmt.get('original')
+                })
 
             # Sortuj i zapisz atomowo
             transcript_data['statements'].sort(key=lambda x: x.get('num', 0))
@@ -233,6 +279,25 @@ class FileOperationsImpl:
         except Exception as e:
             logger.debug(f"Nie można obliczyć czasu trwania: {e}")
             return None
+
+    def _html_to_text(self, html: str) -> str:
+        """Proste czyszczenie HTML -> tekst zwykły.
+
+        Nie używamy zewnętrznych zależności; proste zastąpienia i usunięcie tagów
+        wystarczą do analizy treści w detektorze.
+        """
+        try:
+            import re
+
+            text = re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', html, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+            text = re.sub(r'<[^>]+>', ' ', text)
+            # podstawowe encje
+            text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+            text = re.sub(r'\s+', ' ', text)
+            return text.strip()
+        except Exception:
+            return html
 
     def save_proceeding_info(self, term: int, proceeding_id: int, proceeding_info: Dict) -> Optional[str]:
         """
