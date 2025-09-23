@@ -1,229 +1,94 @@
-# SejmBot — Detektor śmiesznych momentów z polskiego parlamentu
+# SejmBot — system do wykrywania zabawnych fragmentów z posiedzeń Sejmu
 
-## Basically:
+SejmBot to docelowo apka mobilna. Bot po każdym posiedzeniu sejmu RP wchodzi na stronę sejmu, pobiera najnowszy transkrypt posiedzenia w pdfie, zamienia go na tekst i ekstraktuje wypowiedzi łącząc je z ich autorami (i ich klubami parlamentarnymi), a następnie szuka w wypowiedziach słów kluczowych jak "żart”, "absurd" i inne (mam listę chyba około 150 słów, każde z odpowiednią wagą) które mogą wskazywać na to, że wypowiedź (jej fragment) jest śmieszny. (Na tym etapie jestem). Następnie na podstawie nagromadzenia tych słów kluczowych w wypowiedziach wybieramy 33 % najlepszych, a następnie je wysłamy do API OpenAI/Claude z zapytaniem: czy to jest śmieszne? Jeśli tak, to w ten sposób wyselekcjonowany śmiesny fragment z linkiem do pełnej wypowiedzi w formie wideo z wideorekordu posiedzenia jest wysłany do bazy danych, skąd jest przesyłany do aplikacji mobilnej. End user dostaje powiadomienie z wygenerowanym przez dane API nagłówkiem śmiesznej wypowiedzi (podsumowaniem jej np.), klika w powiadomienie i jest 10 % szans że się uśmiechnie pod nosem, i jego dzień będzie o 🤏 lepszy dzięki mnie.
 
-SejmBot to docelowo apka mobilna. Bot po każdym posiedzeniu sejmu RP wchodzi na stronę sejmu, pobiera najnowszy
-transkrypt posiedzenia w pdfie, zamienia go na tekst i ekstraktuje wypowiedzi łącząc je z ich autorami (i ich klubami
-parlamentarnymi), a następnie szuka w wypowiedziach słów kluczowych jak "żart”, "absurd" i inne (mam listę chyba około
-150 słów, każde z odpowiednią wagą) które mogą wskazywać na to, że wypowiedź (jej fragment) jest śmieszny. (Na tym
-etapie jestem). Następnie na podstawie nagromadzenia tych słów kluczowych w wypowiedziach wybieramy 33 % najlepszych, a
-następnie je wysłamy do API OpenAI/Claude z zapytaniem: czy to jest śmieszne? Jeśli tak, to w ten sposób
-wyselekcjonowany śmiesny fragment z linkiem do pełnej wypowiedzi w formie wideo z wideorekordu posiedzenia jest wysłany
-do bazy danych, skąd jest przesyłany do aplikacji mobilnej. End user dostaje powiadomienie z wygenerowanym przez dane
-API nagłówkiem śmiesznej wypowiedzi (podsumowaniem jej np.), klika w powiadomienie i jest 10 % szans że się uśmiechnie
-pod nosem, i jego dzień będzie o 🤏 lepszy dzięki mnie.
+## Cel projektu
 
-## Architektura systemu
+SejmBot to zestaw narzędzi do pobierania stenogramów i wykrywania fragmentów wypowiedzi o potencjale humorystycznym.
+Pipeline składa się z trzech głównych komponentów:
 
-### Pipeline przetwarzania:
+- SejmBotScraper — pobiera stenogramy i wypowiedzi z oficjalnego API Sejmu.
+- SejmBotDetektor — analizuje teksty i wyodrębnia fragmenty potencjalnie zabawne.
+- SejmBotAI (w planach) — dodatkowa analiza przez model AI (np. OpenAI/Claude) i selekcja wyników.
 
-1. **Automatyczne pobieranie** stenogramów z API Sejmu RP (SejmBotScraper)
-2. **Detekcja fragmentów** ze słowami kluczowymi wskazującymi na humor (SejmBotDetektor)
-3. **Analiza AI** najlepszych fragmentów (OpenAI/Claude API)
-4. **Selekcja i linkowanie** z nagraniami wideo z posiedzeń
-5. **Powiadomienia push** przez aplikację mobilną
+Repozytorium zawiera implementacje modułów oraz skrypty pomocnicze do lokalnego uruchomienia i integracji w pipeline.
 
-## Obecny etap rozwoju
+## Szybka instalacja
 
-**Aktualnie:** Etap 2 - System przetwarzania tekstu + Etap 3 - Automatyzacja scrapingu
+1. Utwórz i aktywuj wirtualne środowisko w katalogu projektu:
 
-### ✅ Zaimplementowane komponenty:
-
-#### SejmBotScraper
-
-- Zaawansowane pobieranie stenogramów z API Sejmu RP
-- Inteligentne filtrowanie duplikatów i przyszłych posiedzeń
-- Production-ready automation (cron-compatible)
-- Szczegółowe statystyki i error handling
-
-#### SejmBotDetektor
-
-- Wczytuje pliki PDF z transkryptami Sejmu
-- Wykrywa słowa kluczowe mogące wskazywać na śmieszność
-- Wyodrębnia fragmenty z kontekstem
-- Zapisuje metadane (mówca, posiedzenie, poziom pewności)
-- Eksportuje wyniki do JSON/CSV
-
-### 🔄 W trakcie rozwoju:
-
-- **Scheduler/Cron integration** dla automatycznego pobierania
-- **Pipeline orchestration** łączący scraper z detektorem
-
-## Funkcjonalności SejmBotDetektora
-
-### Główne możliwości
-
-- **Analiza PDF:** Automatyczne wyciąganie tekstu z transkryptów
-- **Wykrywanie słów kluczowych:** Ponad 30 słów wskazujących na humor/absurd
-- **System oceniania:** Algorytm pewności (0.0-1.0) dla każdego fragmentu
-- **Filtrowanie duplikatów:** Automatyczne usuwanie podobnych fragmentów
-- **Eksport wyników:** JSON, CSV z pełnymi metadanymi
-- **Tryb debugowania:** Szczegółowe logi procesu analizy
-
-### Przykładowe słowa kluczowe
-
-- **Wysokiej pewności:** śmiech, żart, bzdura, cyrk, gafa, wrzawa
-- **Średniej pewności:** chaos, skandaliczny, awantura, oklaski
-- **Niskiej pewności:** teatr, naprawdę, serio (wymagają kontekstu)
-
-## Algorytm wykrywania
-
-System używa wielokryterialnej analizy:
-
-1. **Wyszukiwanie słów kluczowych** z wagami (1-3 punkty)
-2. **Analiza kontekstu** — wykluczenie formalnych części
-3. **Ocena długości** — preferowane fragmenty 20+ słów
-4. **Bonus za różnorodność** — wiele różnych słów kluczowych
-5. **Identyfikacja mówcy** — wyższy priorytet dla znanych polityków
-
-## Przykłady konfiguracji detektora
-
-### Restrykcyjne przetwarzanie (tylko najlepsze)
-
-```python
-pdf_path = "transkrypty_sejmu"
-min_confidence = 0.6  # Wysoki próg pewności
-max_fragments_per_file = 5  # Mało fragmentów z każdego pliku
-max_total_fragments = 25  # Mały limit całkowity
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
 ```
 
-### Obszerne przetwarzanie (więcej wyników)
+2. Zainstaluj zależności:
 
-```python
-pdf_path = "transkrypty_sejmu"
-min_confidence = 0.2  # Niski próg pewności
-max_fragments_per_file = 50  # Dużo fragmentów z każdego pliku
-max_total_fragments = 500  # Duży limit całkowity
+```powershell
+pip install -r requirements.txt
 ```
 
-## Przykłady użycia
+3. (Opcjonalnie) Skonfiguruj wartości w `.env` lub w plikach konfiguracyjnych znajdujących się w katalogach `SejmBotScraper/config` i `SejmBotDetektor/config`.
 
-### SejmBotScraper - Pobieranie stenogramów
+## Uruchamianie
 
-```bash
-# Pobierz całą kadencję z wypowiedziami
-python SejmBotScraper/main.py -t 10 --statements -v --log-file kadencja_10.log
+Przykładowe polecenia:
 
-# Pobierz konkretne posiedzenia
-python SejmBotScraper/main.py -t 10 -p 15
+- Pobranie stenogramów (domyślnie zapis w katalogu, z którego uruchamiasz):
 
-# Sprawdź dostępne kadencje
-python SejmBotScraper/main.py --list-terms
+```powershell
+python -m SejmBotScraper.main
 ```
 
-### SejmBotDetektor - Analiza humoru
+- Hurtowe pobranie z pobieraniem treści wypowiedzi:
 
-```python
-from SejmBotDetektor.detector import FragmentDetector
-
-detector = FragmentDetector(debug=True)
-results = detector.process_folder(
-    "stenogramy_sejm/kadencja_10",
-    min_confidence=0.3,
-    max_total_fragments=100
-)
+```powershell
+python -m SejmBotScraper.main --bulk --fetch-full-statements --concurrent-downloads 4
 ```
 
-## Statystyki i metryki
+## Architektura i flow
 
-System generuje automatyczne statystyki:
+1. SejmBotScraper pobiera listę posiedzeń i dokumenty (PDF/HTML), zapisuje metadane i transkrypcje.
+2. SejmBotDetektor przetwarza zapisaną zawartość, wyszukuje słowa kluczowe i generuje fragmenty z metadanymi.
+3. W planach: SejmBotAI dokonuje oceny „śmieszności” fragmentów i przygotowuje finalne wyniki dla aplikacji mobilnej.
 
-- Łączna liczba znalezionych fragmentów
-- Średnia/min/max pewność
-- Top 5 najaktywniejszych mówców
-- Najczęściej występujące słowa kluczowe
-- Rozkład pewności fragmentów
+## Format danych wyjściowych
 
-## Przyszłe etapy
+Transkrypty i wyniki detektora zapisujemy w formacie JSON. Przykładowe pliki i struktury:
 
-- [ ] **Etap 4:** Integracja z API OpenAI dla lepszej analizy humoru
-- [ ] **Etap 5:** Linkowanie fragmentów z nagraniami wideo z posiedzeń
-- [ ] **Etap 6:** Backend i baza danych (Firebase)
-- [ ] **Etap 7:** Aplikacja mobilna (Kotlin)
-- [ ] **Etap 8:** System powiadomień push
-- [ ] **Etap 9:** Deployment i automatyzacja
-- [ ] **Etap 10:** Monitoring jakości i user feedback
+- `info_posiedzenia.json` — metadane posiedzenia
+- `transcripts/transkrypty_<YYYY-MM-DD>.json` — lista wypowiedzi (pole `text` oraz minimalne metadane)
+- `detector/results_<timestamp>.json` — wyniki detektora z fragmentami i ocenami
 
-## Komponenty systemu
+Szczegółowy opis formatu `transkrypty_<YYYY-MM-DD>.json` znajduje się w `SejmBotScraper/README.md`.
 
-### 🔧 SejmBotScraper
+## CLI i przydatne opcje SejmBotScraper
 
-**Status:** Production ready  
-**Funkcja:** Automatyczne pobieranie stenogramów z API Sejmu RP  
+- `--bulk` — uruchamia hurtowe pobieranie.
+- `--fetch-full-statements` — pobiera treść wypowiedzi (HTML -> tekst). Domyślnie wyłączone.
+- `--concurrent-downloads N` — limit równoległości pobrań.
+- `--output-dir PATH` — katalog wyjściowy.
+- `--max-proceedings N` — do testów, ogranicza liczbę posiedzeń.
+- `--log-file FILE` — zapis logów do pliku.
 
-### 🎭 SejmBotDetektor
+## Testy i uruchomienia lokalne
 
-**Status:** Zaimplementowany  
-**Funkcja:** Wykrywanie potencjalnie śmiesznych fragmentów  
+- Do szybkich testów użyj `--max-proceedings 1` i `--concurrent-downloads 1`.
+- Uruchomienia planuj z aktywnym venv, odpowiednimi limitami równoległości i zapisem logów.
 
-### 🤖 SejmBotAI
+## Ograniczenia i uwagi
 
-**Status:** Planowany  
-**Funkcja:** AI analysis śmieszności fragmentów (OpenAI/Claude)
+- Projekt wykorzystuje publiczne API Sejmu; dostępność API wpływa na działanie.
+- Pełne pobranie i analiza całej kadencji może zajmować dużo miejsca i czasu.
+- Nie wszystkie wypowiedzi mają łatwo dostępne treści; w takim przypadku pliki z transkryptami mogą nie powstać.
 
-### 📱 SejmBotMobile
+## Dalszy rozwój
 
-**Status:** Planowany  
-**Funkcja:** Aplikacja mobilna z powiadomieniami push
+SejmBotDetektor czeka w niedługim czasie remont generalny. Poza tym:
 
-## Format wyjściowy
-
-### JSON z wynikami detektora
-
-```json
-{
-  "summary": {
-    "total_files": 5,
-    "total_fragments": 47,
-    "files_processed": [
-      "plik1.pdf",
-      "plik2.pdf",
-      ...
-    ]
-  },
-  "files": {
-    "plik1.pdf": {
-      "fragment_count": 12,
-      "avg_confidence": 0.65,
-      "fragments": [
-        ...
-      ]
-    }
-  }
-}
-```
-
-## Konfiguracja i rozszerzenia
-
-### Dodawanie słów kluczowych
-
-```python
-from SejmBotDetektor.config.keywords import KeywordsConfig
-
-KeywordsConfig.add_funny_keyword("nowe_słowo", weight=2)
-KeywordsConfig.add_exclude_keyword("słowo_do_wykluczenia")
-```
-
-### Dostosowywanie wzorców mówców
-
-W [`keywords.py`](https://github.com/philornot/SejmBot/blob/main/SejmBotDetektor/config/keywords.py) w
-`SPEAKER_PATTERNS` - dodaj nowy wzorzec dla nietypowych formatów.
-
-## Technologie
-
-- **Python 3.8+** - główny język
-- **Requests** - API communication
-- **PyPDF2/pdfplumber** - PDF processing
-- **pathlib** - file management
-- **JSON/CSV** - data export
-- **Logging** - comprehensive monitoring
-
-## Limitacje
-
-- **SejmBotScraper:** Zależy od dostępności API Sejmu RP
-- **SejmBotDetektor:** Maksymalnie `max_total_fragments` fragmentów w wyniku
-- **Przetwarzanie:** Duże foldery wymagają czasu na analizę
-- **PDF:** Każdy plik musi być prawidłowy i zawierać tekst
+- Integracja z OpenAI/Anthropic API w celu selekcji fragmentów.
+- Automatyzacja pipeline (scheduler, orkiestracja z backendem i bazą danych).
+- Testy jednostkowe i schema validation dla plików wyjściowych.
 
 ## Licencja
 
@@ -236,4 +101,4 @@ Wykorzystuje publiczne transkrypty z posiedzeń Sejmu RP.
 
 #### ej aj?
 
-tak, sejmbot jest rozwijany przy pomocy chatbotów :> (dopóki działa to czemu nie?)
+tak, sejmbot jest rozwijany _przy pomocy_ chatbotów :> (dopóki działa to czemu nie?)\*
