@@ -1,304 +1,92 @@
+"""Entry point for SejmBotDetektor
+
+CLI minimalny szkic — bez implementacji detekcji AI.
 """
-Główny skrypt (entry-point) - wersja zrefaktorowana
-Deleguje całą logikę do odpowiednich komponentów
-"""
-import os
+
+import argparse
 from pathlib import Path
-
-from SejmBotDetektor.generate_output.output_manager import OutputManager
-from SejmBotDetektor.logging.colors import Colors
-from SejmBotDetektor.logging.logger import logger, LogLevel
+from .config import get_detector_settings
 
 
-def ensure_output_folder() -> str:
-    """
-    Zapewnia istnienie folderu output i zwraca jego ścieżkę
+def create_parser():
+    parser = argparse.ArgumentParser(
+        description='SejmBotDetektor — przygotowanie i przetwarzanie tekstów przed analizą AI',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
-    Returns:
-        Ścieżka do folderu output
-    """
-    output_folder = "output"
+    parser.add_argument('--input-dir', type=str, help='Katalog z plikami transkryptów (domyślnie z configu)')
+    parser.add_argument('--output-dir', type=str, help='Katalog do zapisu wyników (domyślnie z configu)')
+    parser.add_argument('--max-statements', type=int, help='Maksymalna liczba wypowiedzi do przetworzenia')
+    parser.add_argument('--test-mode', action='store_true', help='Tryb testowy — ograniczone zachowanie i więcej logów')
+
+    parser.add_argument('--version', action='version', version='SejmBotDetektor 0.1.0')
+
+    return parser
+
+
+def main(argv=None):
+    parser = create_parser()
+    args = parser.parse_args(argv)
+
+    settings = get_detector_settings()
+
+    input_dir = Path(args.input_dir) if args.input_dir else settings.input_dir
+    output_dir = Path(args.output_dir) if args.output_dir else settings.output_dir
+    max_statements = args.max_statements if args.max_statements is not None else settings.max_statements
+    test_mode = args.test_mode or settings.test_mode
+
+    # Minimalny smoke-run: pokaż parametry i wykonaj prosty test wczytania pliku
+    print('SejmBotDetektor — szkic entrypointu')
+    print(f'  input_dir:  {input_dir}')
+    print(f'  output_dir: {output_dir}')
+    print(f'  max_statements: {max_statements}')
+    print(f'  test_mode: {test_mode}')
+
+    # Upewnij się, że katalog wyników istnieje
     try:
-        os.makedirs(output_folder, exist_ok=True)
-        return output_folder
-    except Exception as e:
-        logger.error(f"Nie można utworzyć folderu output: {e}")
-        logger.warning("Pliki zostaną zapisane w folderze głównym")
-        return ""
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        print(f'Nie można utworzyć katalogu output: {output_dir}')
 
+    # Jeśli włączono tryb testowy, wykonaj prosty smoke-run: wczytaj przykładowy JSON i policz wypowiedzi
+    if test_mode:
+        import json
+        from pathlib import Path
 
-def validate_environment():
-    """
-    Sprawdza czy środowisko jest poprawnie skonfigurowane
-    """
-    # Sprawdzamy czy istnieje baza posłów
-    poslowie_file_exists = any(os.path.exists(path) for path in [
-        "poslowie_kluby.json",
-        "SejmBotDetektor/data/poslowie_kluby.json",
-        "data/poslowie_kluby.json"
-    ])
-
-    if not poslowie_file_exists:
-        logger.warning("Nie znaleziono pliku poslowie_kluby.json")
-        logger.info("Utwórz plik poslowie_kluby.json zgodnie z dokumentacją dla lepszego przypisywania klubów")
-
-    # Walidacja konfiguracji słów kluczowych
-    try:
-        from SejmBotDetektor.config.keywords import KeywordsConfig
-        issues = KeywordsConfig.validate_keywords()
-        if issues:
-            logger.warning("Znaleziono problemy w konfiguracji słów kluczowych:")
-            for issue in issues:
-                logger.list_item(issue, level=1)
-            print()
-    except ImportError:
-        logger.warning("Nie można zwalidować konfiguracji słów kluczowych")
-
-
-def print_configuration(pdf_path: str, min_confidence: float, max_fragments_per_file: int,
-                        max_total_fragments: int, context_before: int, context_after: int, debug_mode: bool):
-    """
-    Wyświetla konfigurację aplikacji
-    """
-    logger.section("KONFIGURACJA")
-
-    path = Path(pdf_path)
-    if path.is_dir():
-        logger.keyvalue("Folder z PDFami", pdf_path, Colors.CYAN)
-        logger.keyvalue("Max fragmentów na plik", str(max_fragments_per_file), Colors.BLUE)
-        logger.keyvalue("Max fragmentów łącznie", str(max_total_fragments), Colors.BLUE)
-    elif path.is_file():
-        logger.keyvalue("Plik PDF", pdf_path, Colors.CYAN)
-        logger.keyvalue("Max fragmentów", str(max_fragments_per_file), Colors.BLUE)
-    else:
-        logger.keyvalue("Ścieżka PDF/Folder", pdf_path, Colors.CYAN)
-        logger.info("(Zostanie automatycznie wykryta czy to plik czy folder)")
-
-    logger.keyvalue("Minimalny próg pewności", str(min_confidence), Colors.YELLOW)
-    logger.keyvalue("Kontekst słów", f"{context_before}/{context_after}", Colors.MAGENTA)
-    logger.keyvalue("Tryb debugowania", "WŁĄCZONY" if debug_mode else "WYŁĄCZONY",
-                    Colors.GREEN if debug_mode else Colors.GRAY)
-
-
-def print_suggestions():
-    """Wyświetla sugestie gdy nie znaleziono fragmentów"""
-    logger.info("Spróbuj dostroić parametry:")
-    logger.list_item("Obniż min_confidence", level=1)
-    logger.list_item("Zwiększ context_before/context_after", level=1)
-    logger.list_item("Sprawdź zawartość plików PDF", level=1)
-    logger.list_item("Upewnij się że pliki to transkrypty sejmowe", level=1)
-
-
-def main():
-    """Główna funkcja programu - czysty entry-point delegujący do OutputManager"""
-
-    # Konfiguracja
-    pdf_path = "transkrypty"
-    min_confidence = 0.3
-    max_fragments_per_file = 20
-    max_total_fragments = 100
-    context_before = 50
-    context_after = 100
-    debug_mode = True
-
-    # Ustawiamy poziom logowania
-    if debug_mode:
-        logger.set_level(LogLevel.DEBUG)
-    else:
-        logger.set_level(LogLevel.INFO)
-
-    try:
-        # Nagłówek aplikacji
-        logger.header("DETEKTOR ŚMIESZNYCH FRAGMENTÓW Z SEJMU")
-
-        # Inicjalizacja środowiska
-        output_folder = ensure_output_folder()
-        if output_folder:
-            logger.info(f"Pliki wyjściowe będą zapisane w folderze: {output_folder}")
-
-        validate_environment()
-        print_configuration(pdf_path, min_confidence, max_fragments_per_file,
-                            max_total_fragments, context_before, context_after, debug_mode)
-
-        # Przygotowujemy konfigurację do zapisania w metadanych
-        export_config = {
-            "min_confidence": min_confidence,
-            "max_fragments_per_file": max_fragments_per_file,
-            "max_total_fragments": max_total_fragments,
-            "context_before": context_before,
-            "context_after": context_after,
-            "debug_mode": debug_mode
-        }
-
-        logger.info("Rozpoczynam przetwarzanie...")
-
-        # Inicjalizacja OutputManager - to on teraz zarządza całym procesem
-        output_manager = OutputManager(debug=debug_mode, output_folder=output_folder)
-
-        path = Path(pdf_path)
-        if path.is_dir():
-            # Przetwarzanie folderu - wszystko w OutputManager
-            results = output_manager.process_folder_results(
-                folder_path=pdf_path,
-                min_confidence=min_confidence,
-                max_fragments_per_file=max_fragments_per_file,
-                max_total_fragments=max_total_fragments,
-                context_before=context_before,
-                context_after=context_after
-            )
-
-            if not results:
-                logger.warning("Nie znaleziono fragmentów spełniających kryteria w żadnym pliku")
-                print_suggestions()
-                return
-
-            # Wyświetlenie wyników
-            output_manager.print_folder_results(results, max_files=5)
-
-            # Eksport wyników
-            logger.section("ZAPIS WYNIKÓW")
-            include_html = debug_mode  # HTML tylko w trybie debug
-
-            if output_manager.export_results(results, "batch_results", include_html, export_config):
-                logger.success("Eksport zakończony pomyślnie")
-            else:
-                logger.warning("Niektóre eksporty mogły się nie powieść")
-
-            # Statystyki
-            all_fragments = [f for fragments in results.values() for f in fragments]
-            if all_fragments:
-                output_manager.print_summary_stats(all_fragments)
-
-        else:
-            # Przetwarzanie pojedynczego pliku
-            fragments = output_manager.process_single_file_complete(
-                pdf_path=pdf_path,
-                min_confidence=min_confidence,
-                max_fragments=max_fragments_per_file,
-                include_export=True
-            )
-
-            if not fragments:
-                logger.warning("Nie znaleziono fragmentów spełniających kryteria")
-                print_suggestions()
-                return
-
-            # Statystyki
-            output_manager.print_summary_stats(fragments)
-
-        # Podsumowanie eksportu
-        output_manager.print_export_summary()
-        logger.success("Analiza zakończona pomyślnie!")
-
-        if output_folder:
-            logger.info(f"Wszystkie pliki wyjściowe zapisano w folderze: {output_folder}")
-
-    except ValueError as e:
-        logger.critical(f"Błąd konfiguracji: {e}")
-    except FileNotFoundError:
-        logger.error(f"Ścieżka {pdf_path} nie została znaleziona")
-        logger.info("Sprawdź czy ścieżka do pliku PDF lub folderu jest prawidłowa")
-    except Exception as e:
-        logger.critical(f"Nieoczekiwany błąd: {e}")
-        if debug_mode:
-            import traceback
-            logger.error("Stos wywołań:")
-            print(traceback.format_exc())
-
-
-def interactive_mode():
-    """Tryb interaktywny wykorzystujący OutputManager"""
-    print("=== TRYB INTERAKTYWNY ===\n")
-
-    output_folder = ensure_output_folder()
-    output_manager = OutputManager(debug=False, output_folder=output_folder)
-
-    # Pobieranie parametrów od użytkownika
-    pdf_path = input("Podaj ścieżkę do pliku PDF lub folderu (Enter = transkrypty): ").strip()
-    if not pdf_path:
-        pdf_path = "transkrypty"
-
-    try:
-        min_conf_input = input("Minimalna pewność (Enter = 0.3): ").strip()
-        min_confidence = float(min_conf_input) if min_conf_input else 0.3
-    except ValueError:
-        min_confidence = 0.3
-
-    try:
-        max_frag_input = input("Maksymalna liczba fragmentów (Enter = 50): ").strip()
-        max_fragments = int(max_frag_input) if max_frag_input else 50
-    except ValueError:
-        max_fragments = 50
-
-    debug_input = input("Tryb debugowania? (t/n, Enter = n): ").strip().lower()
-    debug_mode = debug_input in ['t', 'tak', 'true', 'yes']
-
-    html_input = input("Generować raport HTML? (t/n, Enter = n): ").strip().lower()
-    include_html = html_input in ['t', 'tak', 'true', 'yes']
-
-    # Aktualizujemy OutputManager z debug mode
-    output_manager = OutputManager(debug=debug_mode, output_folder=output_folder)
-
-    path = Path(pdf_path)
-    if path.is_dir():
+        # 1) jeśli podano input_dir i znajdują się pliki .json, wybierz pierwszy
+        sample_path = None
         try:
-            max_per_file_input = input("Maksymalna liczba fragmentów na plik (Enter = 20): ").strip()
-            max_per_file = int(max_per_file_input) if max_per_file_input else 20
-        except ValueError:
-            max_per_file = 20
+            if args.input_dir:
+                p = Path(args.input_dir)
+                if p.exists() and p.is_dir():
+                    json_files = list(p.glob('*.json'))
+                    if json_files:
+                        sample_path = json_files[0]
+
+            # 2) fallback: wbudowany fixture w pakiecie
+            if sample_path is None:
+                sample_path = Path(__file__).parent / 'fixtures' / 'transcript_sample.json'
+
+            if sample_path and sample_path.exists():
+                with open(sample_path, 'r', encoding='utf-8') as fh:
+                    data = json.load(fh)
+
+                statements = data.get('statements') or data.get('statements', [])
+                # Be robust: if statements is dict with key 'statements'
+                if isinstance(statements, dict):
+                    statements = statements.get('statements', [])
+
+                n = len(statements) if isinstance(statements, list) else 0
+                print(f"\nSMOKE-RUN: wczytano plik: {sample_path}")
+                print(f"SMOKE-RUN: liczba wypowiedzi: {n}")
+            else:
+                print('\nSMOKE-RUN: nie znaleziono przykładowego pliku JSON do wczytania')
+        except Exception as e:
+            print(f'Błąd podczas smoke-run: {e}')
+
     else:
-        max_per_file = max_fragments
-
-    # Konfiguracja eksportu
-    export_config = {
-        "min_confidence": min_confidence,
-        "max_fragments": max_fragments,
-        "max_per_file": max_per_file,
-        "interactive_mode": True,
-        "user_requested_html": include_html
-    }
-
-    try:
-        if path.is_dir():
-            results = output_manager.process_folder_results(
-                folder_path=pdf_path,
-                min_confidence=min_confidence,
-                max_fragments_per_file=max_per_file,
-                max_total_fragments=max_fragments
-            )
-
-            if results:
-                output_manager.print_folder_results(results)
-                if output_manager.export_results(results, "interactive_batch", include_html, export_config):
-                    print("Wyniki z folderu zostały zapisane!")
-
-                all_fragments = [f for fragments in results.values() for f in fragments]
-                if all_fragments:
-                    output_manager.print_summary_stats(all_fragments)
-        else:
-            fragments = output_manager.process_single_file_complete(
-                pdf_path=pdf_path,
-                min_confidence=min_confidence,
-                max_fragments=max_fragments,
-                include_export=include_html
-            )
-
-            if fragments:
-                if include_html:
-                    if output_manager.export_results(fragments, "interactive_fragments", include_html, export_config):
-                        print("Fragmenty zostały zapisane!")
-
-        output_manager.print_export_summary()
-
-    except Exception as e:
-        print(f"Błąd: {e}")
+        print('\nUWAGA: Moduł detektora jest jeszcze w fazie szkicu. Nie wykonano rzeczywistej detekcji.')
 
 
-if __name__ == "__main__":
-    # Można wybrać tryb uruchomienia:
-
-    # 1. Standardowe uruchomienie
+if __name__ == '__main__':
     main()
-
-    # 2. Tryb interaktywny (odkomentuj poniższą linię)
-    # interactive_mode()
