@@ -12,3 +12,4 @@ SejmBotDetektor/data/poslowie.html
 data_sejm
 *.pyc
 data
+.github/copilot-instructions.md
