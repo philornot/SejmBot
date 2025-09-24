@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "term": 10,
+    "proceeding_id": 1,
+    "date": "2023-11-13",
+    "generated_at": "2023-11-13T12:00:00"
+  },
+  "statements": [
+    {
+      "num": 1,
+      "name": "Jan Kowalski",
+      "text": "<p>Dzień dobry. Chciałbym zacząć od krótkiego pytania.</p>"
+    },
+    {
+      "num": 2,
+      "name": "Anna Nowak",
+      "text": "<div>To jest przykład dłuższej wypowiedzi, która zawiera kilka zdań, i która powinna zostać podzielona odpowiednio przez split_into_sentences().</div>"
+    },
+    {
+      "num": 3,
+      "name": "Piotr Zieliński",
+      "text": "<p>Śmieszny fragment &amp; żartobliwy ton.</p>"
+    }
+  ]
+}
