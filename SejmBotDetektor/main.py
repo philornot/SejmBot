@@ -35,7 +35,7 @@ def main(argv=None):
     max_statements = args.max_statements if args.max_statements is not None else settings.max_statements
     test_mode = args.test_mode or settings.test_mode
 
-    # Minimalny smoke-run: pokaż parametry i zakończ
+    # Minimalny smoke-run: pokaż parametry i wykonaj prosty test wczytania pliku
     print('SejmBotDetektor — szkic entrypointu')
     print(f'  input_dir:  {input_dir}')
     print(f'  output_dir: {output_dir}')
@@ -48,7 +48,44 @@ def main(argv=None):
     except Exception:
         print(f'Nie można utworzyć katalogu output: {output_dir}')
 
-    print('\nUWAGA: Moduł detektora jest jeszcze w fazie szkicu. Nie wykonano rzeczywistej detekcji.')
+    # Jeśli włączono tryb testowy, wykonaj prosty smoke-run: wczytaj przykładowy JSON i policz wypowiedzi
+    if test_mode:
+        import json
+        from pathlib import Path
+
+        # 1) jeśli podano input_dir i znajdują się pliki .json, wybierz pierwszy
+        sample_path = None
+        try:
+            if args.input_dir:
+                p = Path(args.input_dir)
+                if p.exists() and p.is_dir():
+                    json_files = list(p.glob('*.json'))
+                    if json_files:
+                        sample_path = json_files[0]
+
+            # 2) fallback: wbudowany fixture w pakiecie
+            if sample_path is None:
+                sample_path = Path(__file__).parent / 'fixtures' / 'transcript_sample.json'
+
+            if sample_path and sample_path.exists():
+                with open(sample_path, 'r', encoding='utf-8') as fh:
+                    data = json.load(fh)
+
+                statements = data.get('statements') or data.get('statements', [])
+                # Be robust: if statements is dict with key 'statements'
+                if isinstance(statements, dict):
+                    statements = statements.get('statements', [])
+
+                n = len(statements) if isinstance(statements, list) else 0
+                print(f"\nSMOKE-RUN: wczytano plik: {sample_path}")
+                print(f"SMOKE-RUN: liczba wypowiedzi: {n}")
+            else:
+                print('\nSMOKE-RUN: nie znaleziono przykładowego pliku JSON do wczytania')
+        except Exception as e:
+            print(f'Błąd podczas smoke-run: {e}')
+
+    else:
+        print('\nUWAGA: Moduł detektora jest jeszcze w fazie szkicu. Nie wykonano rzeczywistej detekcji.')
 
 
 if __name__ == '__main__':
