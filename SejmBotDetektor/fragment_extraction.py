@@ -104,39 +104,59 @@ def extract_fragments(
                     matched_here = True
                     break
             except re.error:
-                # fallback to simple substring if regex fails for some keyword
                 if kw.lower() in sent_lower:
                     matched_here = True
                     break
         if not matched_here:
             continue
-            # compute context window
-            from_idx = max(0, idx - context_sentences)
-            to_idx = min(len(offsets) - 1, idx + context_sentences)
 
-            frag_start = offsets[from_idx][0]
-            frag_end = offsets[to_idx][1]
+        # compute context window
+        from_idx = max(0, idx - context_sentences)
+        to_idx = min(len(offsets) - 1, idx + context_sentences)
 
-            # Slice from the original plain text to preserve casing
-            # Use normalized text slice to match how sentences were found
-            frag_text = plain_norm[frag_start:frag_end].strip()
-            if len(frag_text) > max_length:
-                frag_text = frag_text[:max_length].rsplit(" ", 1)[0]
-                frag_end = frag_start + len(frag_text)
+        frag_start = offsets[from_idx][0]
+        frag_end = offsets[to_idx][1]
 
-            # compute score as sum of scores entries (best-effort)
-            total_score = sum(s.get("score", 0.0) for s in scores)
+        # Use normalized text slice to match how sentences were found
+        frag_text = plain_norm[frag_start:frag_end].strip()
+        if len(frag_text) > max_length:
+            frag_text = frag_text[:max_length].rsplit(" ", 1)[0]
+            frag_end = frag_start + len(frag_text)
 
-            fragments.append(
-                {
-                    "statement_id": stmt_id,
-                    "start_offset": frag_start,
-                    "end_offset": frag_end,
-                    "text": frag_text,
-                    "score": float(total_score),
-                    "matched_keywords": matched_keywords,
-                }
-            )
+        # Determine which keywords actually occur in this fragment and compute
+        # fragment-local score as sum(count * weight) for those keywords.
+        matched_in_fragment = []
+        frag_score = 0.0
+        seen = set()
+        for s in scores:
+            for m in s.get("matches", []):
+                kw = m.get("keyword")
+                if not kw:
+                    continue
+                kw_l = kw.lower()
+                try:
+                    occurrences = re.findall(r"\b" + re.escape(kw_l) + r"\b", frag_text)
+                    cnt = len(occurrences)
+                except re.error:
+                    cnt = frag_text.count(kw_l)
+
+                if cnt:
+                    wt = float(m.get("weight", 1.0))
+                    if kw not in seen:
+                        matched_in_fragment.append({"keyword": kw, "count": cnt, "weight": wt})
+                        seen.add(kw)
+                    frag_score += cnt * wt
+
+        fragments.append(
+            {
+                "statement_id": stmt_id,
+                "start_offset": frag_start,
+                "end_offset": frag_end,
+                "text": frag_text,
+                "score": float(frag_score),
+                "matched_keywords": matched_in_fragment,
+            }
+        )
 
     return fragments
 
