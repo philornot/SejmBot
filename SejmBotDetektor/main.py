@@ -5,6 +5,7 @@ CLI minimalny szkic — bez implementacji detekcji AI.
 
 import argparse
 from pathlib import Path
+
 from SejmBotDetektor.config import get_detector_settings
 
 
@@ -36,7 +37,7 @@ def main(argv=None):
     test_mode = args.test_mode or settings.test_mode
 
     # Minimalny smoke-run: pokaż parametry i wykonaj prosty test wczytania pliku
-    print('SejmBotDetektor — szkic entrypointu')
+    print('SejmBotDetektor — uruchamiam pipeline detektora')
     print(f'  input_dir:  {input_dir}')
     print(f'  output_dir: {output_dir}')
     print(f'  max_statements: {max_statements}')
@@ -48,8 +49,9 @@ def main(argv=None):
     except Exception:
         print(f'Nie można utworzyć katalogu output: {output_dir}')
 
-    # Jeśli włączono tryb testowy, wykonaj prosty smoke-run: wczytaj przykładowy JSON i policz wypowiedzi
-    if test_mode:
+    # Wspólna implementacja prostego pipeline detektora.
+    def _run_pipeline(use_test_fixture: bool = False):
+        # importy wewnątrz funkcji — lazy imports zgodnie z konwencją repo
         import json
         from pathlib import Path
         from SejmBotDetektor import preprocessing
@@ -57,94 +59,104 @@ def main(argv=None):
         from SejmBotDetektor import fragment_extraction
         from SejmBotDetektor import serializers
 
-        # 1) jeśli podano input_dir i znajdują się pliki .json, wybierz pierwszy
-        sample_path = None
-        try:
-            if args.input_dir:
-                p = Path(args.input_dir)
-                if p.exists() and p.is_dir():
-                    json_files = list(p.glob('*.json'))
-                    if json_files:
-                        sample_path = json_files[0]
+        # przygotuj listę plików wejściowych
+        input_paths = []
+        if not use_test_fixture and input_dir and input_dir.exists() and input_dir.is_dir():
+            json_files = list(Path(input_dir).glob('*.json'))
+            input_paths.extend(json_files)
 
-            # 2) fallback: wbudowany fixture w pakiecie
-            if sample_path is None:
-                sample_path = Path(__file__).parent / 'fixtures' / 'transcript_sample.json'
-
-            if sample_path and sample_path.exists():
-                with open(sample_path, 'r', encoding='utf-8') as fh:
-                    data = json.load(fh)
-
-                statements = data.get('statements') or data.get('statements', [])
-                # Be robust: if statements is dict with key 'statements'
-                if isinstance(statements, dict):
-                    statements = statements.get('statements', [])
-
-                n = len(statements) if isinstance(statements, list) else 0
-                print(f"\nSMOKE-RUN: wczytano plik: {sample_path}")
-                print(f"SMOKE-RUN: liczba wypowiedzi: {n}")
-                # Simple detection pipeline (keyword-based)
-                try:
-                    print('\nSMOKE-RUN: uruchamiam prosty scoring slow-kluczowych i ekstrakcje fragmentow')
-
-                    # Load keywords
-                    kws_path = Path(__file__).parent / 'keywords' / 'keywords.json'
-                    try:
-                        keywords = keyword_scoring.load_keywords_from_json(str(kws_path))
-                    except Exception:
-                        print(f'Nie mozna wczytac slow-kluczowych z {kws_path}, uzywam domyslnych')
-                        keywords = [ {'keyword': 'humor', 'weight': 1.0}, {'keyword': 'żart', 'weight': 2.0} ]
-
-                    all_fragments = []
-                    # Process up to max_statements
-                    for stmt in (statements[:max_statements] if isinstance(statements, list) else []):
-                        text = stmt.get('text') or stmt.get('segment') or ''
-                        cleaned = preprocessing.clean_html(text)
-                        normalized = preprocessing.normalize_text(cleaned)
-                        segments = preprocessing.split_into_sentences(normalized, max_chars=500)
-
-                        # Score segments
-                        scored = keyword_scoring.score_segments(segments, keywords)
-
-                        # Test-mode diagnostics: print per-statement scoring summary
-                        try:
-                            stmt_num = stmt.get('num')
-                        except Exception:
-                            stmt_num = None
-                        matches = []
-                        for s in scored:
-                            for m in s.get('matches', []):
-                                matches.append({'keyword': m.get('keyword'), 'count': m.get('count', 1)})
-                        if test_mode:
-                            print(f"DETECTOR DEBUG: stmt={stmt_num} segments={len(segments)} scored_segments={len(scored)} matches={matches}")
-
-                        # Extract fragments from scored segments
-                        fragments = fragment_extraction.extract_fragments(scored, {'text': text, 'num': stmt.get('num')})
-                        if fragments:
-                            all_fragments.extend(fragments)
-
-                    results = {
-                        'source_file': str(sample_path),
-                        'n_statements': n,
-                        'n_fragments': len(all_fragments),
-                        'fragments': all_fragments,
-                    }
-
-                    # Dump results
-                    try:
-                        out_path = serializers.dump_results(results, base_dir=str(output_dir))
-                        print(f'SMOKE-RUN: zapisano wyniki detektora do: {out_path}')
-                    except Exception as e:
-                        print(f'Nie udalo sie zapisac wynikow: {e}')
-                except Exception as e:
-                    print(f'Blad w prostym pipeline detekcji: {e}')
+        # jeśli brak plików i tryb testowy lub fallback — spróbuj użyć plików wygenerowanych przez Scraper
+        if not input_paths:
+            # Szukaj plików JSON wygenerowanych przez SejmBotScraper w repo (data_sejm lub data)
+            repo_root = Path(__file__).resolve().parents[1]
+            candidate_dirs = [repo_root / 'data_sejm', repo_root / 'data']
+            found = []
+            for cd in candidate_dirs:
+                if cd.exists() and cd.is_dir():
+                    # szukamy rekurencyjnie plików JSON — mogą to być zapisy posiedzeń lub output scrappera
+                    found.extend([p for p in cd.rglob('*.json') if 'detector' not in str(p).lower()])
+            # posortuj, by mieć deterministyczny porządek (najpierw najnowsze według nazwy)
+            found = sorted(found)
+            if found:
+                input_paths.extend(found)
             else:
-                print('\nSMOKE-RUN: nie znaleziono przykładowego pliku JSON do wczytania')
-        except Exception as e:
-            print(f'Błąd podczas smoke-run: {e}')
+                # fallback do wbudowanej próbki — tylko jeśli nic nie znaleziono
+                fixture_path = Path(__file__).parent / 'fixtures' / 'transcript_sample.json'
+                if fixture_path.exists():
+                    input_paths.append(fixture_path)
+                else:
+                    print('Brak plików JSON w input_dir oraz brak plików wygenerowanych przez Scraper i brak wbudowanej próbki. Kończę.')
+                    return
 
-    else:
-        print('\nUWAGA: Moduł detektora jest jeszcze w fazie szkicu. Nie wykonano rzeczywistej detekcji.')
+        # wczytaj słowa kluczowe (najpierw lokalny plik w pakiecie)
+        kws_path = Path(__file__).parent / 'keywords' / 'keywords.json'
+        try:
+            keywords = keyword_scoring.load_keywords_from_json(str(kws_path))
+        except Exception:
+            print(f'Nie mozna wczytac slow-kluczowych z {kws_path}, uzywam domyslnych')
+            keywords = [{'keyword': 'humor', 'weight': 1.0}, {'keyword': 'żart', 'weight': 2.0}]
+
+        # przetwarzaj kolejne pliki (ogranicz do pierwszego, jeśli test-mode ogranicza)
+        for file_p in input_paths:
+            try:
+                with open(file_p, 'r', encoding='utf-8') as fh:
+                    data = json.load(fh)
+            except Exception as e:
+                print(f'Nie mozna wczytac pliku {file_p}: {e}')
+                continue
+
+            statements = data.get('statements') or data
+            if isinstance(statements, dict) and 'statements' in statements:
+                statements = statements.get('statements', [])
+            if not isinstance(statements, list):
+                print(f'Nie rozpoznano listy wypowiedzi w pliku {file_p}')
+                continue
+
+            # ogranicz liczbę wypowiedzi do max_statements
+            stmts_to_process = statements[:max_statements]
+
+            all_fragments = []
+            for stmt in stmts_to_process:
+                text = stmt.get('text') or stmt.get('segment') or ''
+                cleaned = preprocessing.clean_html(text)
+                normalized = preprocessing.normalize_text(cleaned)
+                segments = preprocessing.split_into_sentences(normalized, max_chars=500)
+
+                scored = keyword_scoring.score_segments([{'text': s} for s in segments], keywords)
+
+                fragments = fragment_extraction.extract_fragments(scored, {'text': text, 'num': stmt.get('num')})
+                if fragments:
+                    all_fragments.extend(fragments)
+
+            results = {
+                'source_file': str(file_p),
+                'n_statements': len(statements),
+                'n_processed': len(stmts_to_process),
+                'n_fragments': len(all_fragments),
+                'fragments': all_fragments,
+            }
+
+            try:
+                out_path = serializers.dump_results(results, base_dir=str(output_dir))
+                print(f'Zapisano wyniki detektora do: {out_path}')
+            except Exception as e:
+                print(f'Nie udalo sie zapisac wynikow dla {file_p}: {e}')
+
+            # Jeśli używamy trybu testowego, przetwórz tylko pierwszy plik
+            if use_test_fixture:
+                break
+
+    # Uruchom właściwy pipeline: w trybie testowym — bardziej szczegółowy i z fallbackem;
+    # w normalnym trybie — przetwórz pliki z input_dir (jeśli brak -> fallback do wbudowanej próbki)
+    try:
+        if test_mode:
+            print('\nTRYB TESTOWY: uruchamiam pipeline detektora (diagnostyka)')
+            _run_pipeline(use_test_fixture=True)
+        else:
+            print('\nUruchamiam pipeline detektora (normalny tryb)')
+            _run_pipeline(use_test_fixture=False)
+    except Exception as e:
+        print(f'Blad podczas uruchamiania pipeline detektora: {e}')
 
 
 if __name__ == '__main__':

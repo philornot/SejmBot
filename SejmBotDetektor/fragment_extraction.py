@@ -125,27 +125,32 @@ def extract_fragments(
 
         # Determine which keywords actually occur in this fragment and compute
         # fragment-local score as sum(count * weight) for those keywords.
-        matched_in_fragment = []
-        frag_score = 0.0
-        seen = set()
+        # Build keyword -> weight map (take the first weight seen for a keyword)
+        kw_weights = {}
         for s in scores:
             for m in s.get("matches", []):
                 kw = m.get("keyword")
                 if not kw:
                     continue
-                kw_l = kw.lower()
-                try:
-                    occurrences = re.findall(r"\b" + re.escape(kw_l) + r"\b", frag_text)
-                    cnt = len(occurrences)
-                except re.error:
-                    cnt = frag_text.count(kw_l)
+                if kw not in kw_weights:
+                    try:
+                        kw_weights[kw] = float(m.get("weight", 1.0))
+                    except Exception:
+                        kw_weights[kw] = 1.0
 
-                if cnt:
-                    wt = float(m.get("weight", 1.0))
-                    if kw not in seen:
-                        matched_in_fragment.append({"keyword": kw, "count": cnt, "weight": wt})
-                        seen.add(kw)
-                    frag_score += cnt * wt
+        matched_in_fragment = []
+        frag_score = 0.0
+        for kw, wt in kw_weights.items():
+            kw_l = kw.lower()
+            try:
+                occurrences = re.findall(r"\b" + re.escape(kw_l) + r"\b", frag_text)
+                cnt = len(occurrences)
+            except re.error:
+                cnt = frag_text.count(kw_l)
+
+            if cnt:
+                matched_in_fragment.append({"keyword": kw, "count": cnt, "weight": float(wt)})
+                frag_score += cnt * float(wt)
 
         fragments.append(
             {

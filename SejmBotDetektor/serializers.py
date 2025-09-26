@@ -6,6 +6,8 @@ to avoid circular dependencies.
 """
 from datetime import datetime
 from typing import Any, Dict
+import re
+from pathlib import Path
 
 
 def _init_file_manager(base_dir: str | None = None):
@@ -13,6 +15,16 @@ def _init_file_manager(base_dir: str | None = None):
     from SejmBotScraper.storage.file_manager import FileManagerInterface
 
     return FileManagerInterface(base_dir)
+
+
+def _safe_filename(s: str) -> str:
+    """Sanityzuj string na bezpieczną nazwę pliku (usuń spacje i niedozwolone znaki)."""
+    if not s:
+        return ''
+    s = str(s)
+    # keep only alnum, dash, underscore and dot
+    s = re.sub(r'[^A-Za-z0-9._-]+', '_', s)
+    return s.strip('_')
 
 
 def dump_results(results: Dict[str, Any], base_dir: str | None = None, filename: str | None = None, add_metadata: bool = True) -> str:
@@ -27,8 +39,20 @@ def dump_results(results: Dict[str, Any], base_dir: str | None = None, filename:
     detector_dir.mkdir(parents=True, exist_ok=True)
 
     if filename is None:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'results_{timestamp}.json'
+        # try to derive a readable name from the source filename if present
+        src = results.get('source_file') if isinstance(results, dict) else None
+        src_name = ''
+        try:
+            if src:
+                src_name = Path(src).stem
+        except Exception:
+            src_name = ''
+        src_name = _safe_filename(src_name)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+        if src_name:
+            filename = f'results_{src_name}_{timestamp}.json'
+        else:
+            filename = f'results_{timestamp}.json'
 
     filepath = detector_dir / filename
 
