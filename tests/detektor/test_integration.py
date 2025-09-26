@@ -16,24 +16,12 @@ def test_end_to_end_pipeline_on_fixture(tmp_path):
     Asserts presence of expected keys in output fragments and that at least one
     matched keyword from real keywords appears in fragments.
     """
-    # Try multiple common fixture locations for backward compatibility
-    candidates = [
-        Path(__file__).resolve().parents[2] / 'fixtures' / 'transcripts_example.json',
-        Path(__file__).resolve().parents[2] / 'fixtures' / 'transcript_sample.json',
-        Path(__file__).resolve().parents[3] / 'SejmBotDetektor' / 'fixtures' / 'transcript_sample.json',
-        Path(__file__).resolve().parents[3] / 'SejmBotDetektor' / 'fixtures' / 'transcripts_example.json',
-    ]
-
-    fixtures_p = None
-    for c in candidates:
-        if c.exists():
-            fixtures_p = c
-            break
-
-    if fixtures_p is None:
+    # Canonical fixture used by tests
+    fixtures_p = REPO_ROOT / 'tests' / 'fixtures' / 'transcripts_example.json'
+    if not fixtures_p.exists():
         import pytest
 
-        pytest.skip('Brak pliku fixture dla testu integracyjnego (szukano w tests/fixtures i SejmBotDetektor/fixtures)')
+        pytest.skip(f'Brak pliku fixture {fixtures_p} — upewnij się, że fixtures są w tests/fixtures')
 
     data = json.loads(fixtures_p.read_text(encoding='utf-8'))
 
@@ -53,7 +41,10 @@ def test_end_to_end_pipeline_on_fixture(tmp_path):
     # Step 3: score segments using real keywords file
     kw_path = Path('SejmBotDetektor') / 'keywords' / 'keywords.json'
     keywords = ks.load_keywords_from_json(str(kw_path))
-    scored = ks.score_segments(segments, keywords)
+    # score_segments accepts list[str] or list[dict]; wrap segments as dicts to satisfy typing and
+    # to preserve original segment metadata shape
+    segments_for_scoring = [{'text': s} for s in segments]
+    scored = ks.score_segments(segments_for_scoring, keywords)
     assert isinstance(scored, list), 'Scoring must return a list'
 
     # Step 4: extract fragments from scored results
