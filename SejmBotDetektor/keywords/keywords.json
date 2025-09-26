@@ -5,6 +5,8 @@
   {"keyword": "budżet", "weight": 1.2},
   {"keyword": "emerytura", "weight": 1.8},
   {"keyword": "zdrowie", "weight": 1.0},
+  {"keyword": "pytania", "weight": 1.5},
+  {"keyword": "śmieszny", "weight": 1.2},
   {"keyword": "edukacja", "weight": 1.0},
   {"keyword": "energia", "weight": 1.4}
 ]
