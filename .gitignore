@@ -1,5 +1,7 @@
 /.venv
 /.idea
+/.vscode
+__pycache__
 
 SejmBotScraper/data/transkrypty
 SejmBotDetektor/transkrypty
