@@ -52,6 +52,10 @@ python -m SejmBotScraper.main --bulk --fetch-full-statements --concurrent-downlo
 2. SejmBotDetektor przetwarza zapisaną zawartość, wyszukuje słowa kluczowe i generuje fragmenty z metadanymi.
 3. W planach: SejmBotAI dokonuje oceny „śmieszności” fragmentów i przygotowuje finalne wyniki dla aplikacji mobilnej.
 
+Więcej szczegółów dotyczących detektora znajdziesz w katalogu `SejmBotDetektor` i w jego README:
+
+- SejmBotDetektor: `SejmBotDetektor/README.md`
+
 ## Format danych wyjściowych
 
 Transkrypty i wyniki detektora zapisujemy w formacie JSON. Przykładowe pliki i struktury:
