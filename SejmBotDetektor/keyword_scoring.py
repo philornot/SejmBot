@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from typing import List, Dict, Any, Union, Iterable
 
 
@@ -67,8 +68,22 @@ def _compile_keyword_patterns(keywords: List[Dict[str, Any]]):
         keyword = k['keyword'].strip()
         if not keyword:
             continue
-        # escape to treat keyword literally
-        pattern = re.compile(r"\b" + re.escape(keyword) + r"\b", flags=re.IGNORECASE | re.UNICODE)
+        # prepare normalized keyword (lowercase, remove diacritics) for more robust matching
+        def _normalize(s: str) -> str:
+            s = str(s).lower()
+            s = unicodedata.normalize('NFKD', s)
+            # remove diacritic marks
+            s = ''.join(ch for ch in s if not unicodedata.combining(ch))
+            return s
+
+        norm_kw = _normalize(keyword)
+        # allow a limited set of common Polish inflectional suffixes (avoid matching derivational forms
+        # like '-owy' which are not true inflections). This reduces false positives such as 'kryzysowy'.
+        suffixes = [
+            'u', 'owi', 'em', 'e', 'ie', 'a', 'y', 'ów', 'om', 'ami', 'ach', 'i', 'ę'
+        ]
+        suffix_pattern = r'(?:' + '|'.join(re.escape(s) for s in suffixes) + r')?'
+        pattern = re.compile(r"\b" + re.escape(norm_kw) + suffix_pattern + r"\b", flags=re.IGNORECASE | re.UNICODE)
         compiled.append((keyword, float(k.get('weight', 1.0)), pattern))
     return compiled
 
@@ -80,9 +95,16 @@ def match_keywords_in_text(text: str, keywords: Union[str, Iterable[Dict[str, An
     """
     kw_list = _ensure_keywords(keywords)
     patterns = _compile_keyword_patterns(kw_list)
+    # normalize input text for matching (lowercase + remove diacritics)
+    def _normalize_text(s: str) -> str:
+        s = str(s).lower()
+        s = unicodedata.normalize('NFKD', s)
+        s = ''.join(ch for ch in s if not unicodedata.combining(ch))
+        return s
+    text_norm = _normalize_text(text or '')
     counts: Dict[str, int] = {}
     for keyword, _, pattern in patterns:
-        matches = pattern.findall(text or '')
+        matches = pattern.findall(text_norm)
         cnt = len(matches)
         if cnt:
             counts[keyword] = cnt
@@ -99,6 +121,12 @@ def score_segments(segments: List[Union[str, Dict[str, Any]]], keywords: Union[s
     """
     kw_list = _ensure_keywords(keywords)
     compiled = _compile_keyword_patterns(kw_list)
+    # normalize function for segment texts
+    def _normalize_text(s: str) -> str:
+        s = str(s).lower()
+        s = unicodedata.normalize('NFKD', s)
+        s = ''.join(ch for ch in s if not unicodedata.combining(ch))
+        return s
 
     results: List[Dict[str, Any]] = []
     for seg in segments:
@@ -113,8 +141,9 @@ def score_segments(segments: List[Union[str, Dict[str, Any]]], keywords: Union[s
 
         total = 0.0
         matches_list: List[Dict[str, Any]] = []
+        text_norm = _normalize_text(text or '')
         for keyword, weight, pattern in compiled:
-            cnt = len(pattern.findall(text or ''))
+            cnt = len(pattern.findall(text_norm))
             if cnt:
                 total += cnt * float(weight)
                 matches_list.append({'keyword': keyword, 'count': cnt, 'weight': float(weight)})

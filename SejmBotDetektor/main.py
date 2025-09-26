@@ -52,6 +52,10 @@ def main(argv=None):
     if test_mode:
         import json
         from pathlib import Path
+        from SejmBotDetektor import preprocessing
+        from SejmBotDetektor import keyword_scoring
+        from SejmBotDetektor import fragment_extraction
+        from SejmBotDetektor import serializers
 
         # 1) jeśli podano input_dir i znajdują się pliki .json, wybierz pierwszy
         sample_path = None
@@ -79,6 +83,61 @@ def main(argv=None):
                 n = len(statements) if isinstance(statements, list) else 0
                 print(f"\nSMOKE-RUN: wczytano plik: {sample_path}")
                 print(f"SMOKE-RUN: liczba wypowiedzi: {n}")
+                # Simple detection pipeline (keyword-based)
+                try:
+                    print('\nSMOKE-RUN: uruchamiam prosty scoring slow-kluczowych i ekstrakcje fragmentow')
+
+                    # Load keywords
+                    kws_path = Path(__file__).parent / 'keywords' / 'keywords.json'
+                    try:
+                        keywords = keyword_scoring.load_keywords_from_json(str(kws_path))
+                    except Exception:
+                        print(f'Nie mozna wczytac slow-kluczowych z {kws_path}, uzywam domyslnych')
+                        keywords = [ {'keyword': 'humor', 'weight': 1.0}, {'keyword': 'żart', 'weight': 2.0} ]
+
+                    all_fragments = []
+                    # Process up to max_statements
+                    for stmt in (statements[:max_statements] if isinstance(statements, list) else []):
+                        text = stmt.get('text') or stmt.get('segment') or ''
+                        cleaned = preprocessing.clean_html(text)
+                        normalized = preprocessing.normalize_text(cleaned)
+                        segments = preprocessing.split_into_sentences(normalized, max_chars=500)
+
+                        # Score segments
+                        scored = keyword_scoring.score_segments(segments, keywords)
+
+                        # Test-mode diagnostics: print per-statement scoring summary
+                        try:
+                            stmt_num = stmt.get('num')
+                        except Exception:
+                            stmt_num = None
+                        matches = []
+                        for s in scored:
+                            for m in s.get('matches', []):
+                                matches.append({'keyword': m.get('keyword'), 'count': m.get('count', 1)})
+                        if test_mode:
+                            print(f"DETECTOR DEBUG: stmt={stmt_num} segments={len(segments)} scored_segments={len(scored)} matches={matches}")
+
+                        # Extract fragments from scored segments
+                        fragments = fragment_extraction.extract_fragments(scored, {'text': text, 'num': stmt.get('num')})
+                        if fragments:
+                            all_fragments.extend(fragments)
+
+                    results = {
+                        'source_file': str(sample_path),
+                        'n_statements': n,
+                        'n_fragments': len(all_fragments),
+                        'fragments': all_fragments,
+                    }
+
+                    # Dump results
+                    try:
+                        out_path = serializers.dump_results(results, base_dir=str(output_dir))
+                        print(f'SMOKE-RUN: zapisano wyniki detektora do: {out_path}')
+                    except Exception as e:
+                        print(f'Nie udalo sie zapisac wynikow: {e}')
+                except Exception as e:
+                    print(f'Blad w prostym pipeline detekcji: {e}')
             else:
                 print('\nSMOKE-RUN: nie znaleziono przykładowego pliku JSON do wczytania')
         except Exception as e:

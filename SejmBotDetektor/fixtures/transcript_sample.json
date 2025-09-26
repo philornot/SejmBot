@@ -1,0 +1,81 @@
+{
+  "metadata": {
+      "term": 10,
+      "proceeding_id": 1,
+      "date": "2023-11-13",
+      "generated_at": "2025-09-26T00:00:00",
+      "proceeding_info": {
+        "title": "1. Posiedzenie Sejmu RP - przykładowy zapis",
+        "dates": ["2023-11-13"],
+        "num": 1
+      }
+    },
+    "statements": [
+      {
+        "num": 0,
+        "speaker": { "name": "Marszałek", "is_mp": false, "club": null },
+        "text": "Szanowni Państwo, otwieram posiedzenie. Proszę o zachowanie porządku.",
+        "start_time": "2023-11-13T12:07:37",
+        "end_time": "2023-11-13T12:10:00",
+        "duration_seconds": 143,
+        "original": {
+          "num": 0,
+          "speaker": { "name": "Marszałek", "function": "", "club": "" },
+          "timing": { "start_datetime": "2023-11-13T12:07:37", "end_datetime": "2023-11-13T12:10:00", "duration_seconds": 143 },
+          "content": {
+            "html_content": "<p>Szanowni Państwo, otwieram posiedzenie. Proszę o zachowanie porządku.</p>",
+            "text_content": "Szanowni Państwo, otwieram posiedzenie. Proszę o zachowanie porządku.",
+            "content_length": 85,
+            "has_content": true,
+            "source": "api_success",
+            "fetched_at": "2025-09-26T00:00:00"
+          },
+          "technical": { "api_url": "/sejm/term10/proceedings/1/2023-11-13/transcripts/0" }
+        }
+      },
+      {
+        "num": 1,
+        "speaker": { "name": "Andrzej Duda", "is_mp": false, "club": null },
+        "text": "Drodzy Rodacy! W obliczu rosnącej inflacji i nowego kryzysu energetycznego musimy działać odpowiedzialnie.",
+        "start_time": "2023-11-13T12:13:33",
+        "end_time": "2023-11-13T12:44:26",
+        "duration_seconds": 1853,
+        "original": {
+          "num": 1,
+          "speaker": { "name": "Andrzej Duda", "function": "Prezydent RP", "club": "" },
+          "timing": { "start_datetime": "2023-11-13T12:13:33", "end_datetime": "2023-11-13T12:44:26", "duration_seconds": 1853 },
+          "content": {
+            "html_content": "<p>Drodzy Rodacy! W obliczu rosnącej inflacji i nowego kryzysu energetycznego musimy działać odpowiedzialnie.</p>",
+            "text_content": "Drodzy Rodacy! W obliczu rosnącej inflacji i nowego kryzysu energetycznego musimy działać odpowiedzialnie.",
+            "content_length": 120,
+            "has_content": true,
+            "source": "api_success",
+            "fetched_at": "2025-09-26T00:00:01"
+          },
+          "technical": { "api_url": "/sejm/term10/proceedings/1/2023-11-13/transcripts/1" }
+        }
+      },
+      {
+        "num": 2,
+        "speaker": { "name": "Anna Nowak", "is_mp": true, "club": "Klub XYZ" },
+        "text": "Chciałabym dodać coś z humorem, ale sprawa jest poważna: wpływ inflacji na rodziny.",
+        "start_time": "2023-11-13T13:00:00",
+        "end_time": "2023-11-13T13:02:00",
+        "duration_seconds": 120,
+        "original": {
+          "num": 2,
+          "speaker": { "name": "Anna Nowak", "function": "Poseł", "club": "Klub XYZ" },
+          "timing": { "start_datetime": "2023-11-13T13:00:00", "end_datetime": "2023-11-13T13:02:00", "duration_seconds": 120 },
+          "content": {
+            "html_content": "<p>Chciałabym dodać coś z humorem, ale sprawa jest poważna: wpływ inflacji na rodziny.</p>",
+            "text_content": "Chciałabym dodać coś z humorem, ale sprawa jest poważna: wpływ inflacji na rodziny.",
+            "content_length": 110,
+            "has_content": true,
+            "source": "api_success",
+            "fetched_at": "2025-09-26T00:00:02"
+          },
+          "technical": { "api_url": "/sejm/term10/proceedings/1/2023-11-13/transcripts/2" }
+        }
+      }
+    ]
+  }
