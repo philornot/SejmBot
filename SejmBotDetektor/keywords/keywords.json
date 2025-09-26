@@ -1,12 +1,250 @@
 [
-  {"keyword": "kryzys", "weight": 2.0},
-  {"keyword": "pandemia", "weight": 1.5},
-  {"keyword": "inflacja", "weight": 2.0},
-  {"keyword": "budżet", "weight": 1.2},
-  {"keyword": "emerytura", "weight": 1.8},
-  {"keyword": "zdrowie", "weight": 1.0},
-  {"keyword": "pytania", "weight": 1.5},
-  {"keyword": "śmieszny", "weight": 1.2},
-  {"keyword": "edukacja", "weight": 1.0},
-  {"keyword": "energia", "weight": 1.4}
+  {
+    "keyword": "kryzys",
+    "weight": 2.0
+  },
+  {
+    "keyword": "śmieszny",
+    "weight": 1.5
+  },
+  {
+    "keyword": "śmieszna",
+    "weight": 1.5
+  },
+  {
+    "keyword": "śmieszni",
+    "weight": 1.5
+  },
+  {
+    "keyword": "śmiesznym",
+    "weight": 1.5
+  },
+  {
+    "keyword": "żart",
+    "weight": 2.0
+  },
+  {
+    "keyword": "żartem",
+    "weight": 2.0
+  },
+  {
+    "keyword": "żartobliwy",
+    "weight": 1.5
+  },
+  {
+    "keyword": "humor",
+    "weight": 1.0
+  },
+  {
+    "keyword": "humorem",
+    "weight": 1.0
+  },
+  {
+    "keyword": "skandal",
+    "weight": 2.5
+  },
+  {
+    "keyword": "hańba",
+    "weight": 2.5
+  },
+  {
+    "keyword": "wstyd",
+    "weight": 2.0
+  },
+  {
+    "keyword": "buu",
+    "weight": 2.0
+  },
+  {
+    "keyword": "śmiech",
+    "weight": 1.5
+  },
+  {
+    "keyword": "śmiechy",
+    "weight": 1.5
+  },
+  {
+    "keyword": "śmiej",
+    "weight": 1.5
+  },
+  {
+    "keyword": "wesołość",
+    "weight": 1.5
+  },
+  {
+    "keyword": "entuzjazm",
+    "weight": 1.5
+  },
+  {
+    "keyword": "oklaski",
+    "weight": 2.0
+  },
+  {
+    "keyword": "brawa",
+    "weight": 2.0
+  },
+  {
+    "keyword": "aplauz",
+    "weight": 2.0
+  },
+  {
+    "keyword": "brawo",
+    "weight": 2.0
+  },
+  {
+    "keyword": "gwar",
+    "weight": 1.5
+  },
+  {
+    "keyword": "poruszenie",
+    "weight": 1.5
+  },
+  {
+    "keyword": "krzyk",
+    "weight": 1.5
+  },
+  {
+    "keyword": "krzyki",
+    "weight": 1.5
+  },
+  {
+    "keyword": "okrzyki",
+    "weight": 1.5
+  },
+  {
+    "keyword": "cisza",
+    "weight": 1.0
+  },
+  {
+    "keyword": "sprzeciw",
+    "weight": 2.0
+  },
+  {
+    "keyword": "sprostowanie",
+    "weight": 2.0
+  },
+  {
+    "keyword": "wniosek formalny",
+    "weight": 2.0
+  },
+  {
+    "keyword": "przerwa w posiedzeniu",
+    "weight": 2.0
+  },
+  {
+    "keyword": "przerwa w obradach",
+    "weight": 2.0
+  },
+  {
+    "keyword": "zamykam dyskusję",
+    "weight": 1.5
+  },
+  {
+    "keyword": "wznowienie posiedzenia",
+    "weight": 1.5
+  },
+  {
+    "keyword": "kłamstwo",
+    "weight": 2.5
+  },
+  {
+    "keyword": "oszustwo",
+    "weight": 2.5
+  },
+  {
+    "keyword": "groźba",
+    "weight": 2.0
+  },
+  {
+    "keyword": "propozycja czy groźba",
+    "weight": 2.0
+  },
+  {
+    "keyword": "sprzedajecie Polskę",
+    "weight": 3.0
+  },
+  {
+    "keyword": "oddają Polskę",
+    "weight": 3.0
+  },
+  {
+    "keyword": "cenzura",
+    "weight": 2.0
+  },
+  {
+    "keyword": "ucieczka marszałka",
+    "weight": 2.0
+  },
+  {
+    "keyword": "goebbelsowskie",
+    "weight": 3.0
+  },
+  {
+    "keyword": "narzędzia",
+    "weight": 1.0
+  },
+  {
+    "keyword": "hitlerowcami",
+    "weight": 3.0
+  },
+  {
+    "keyword": "komunistycznych",
+    "weight": 2.0
+  },
+  {
+    "keyword": "amen",
+    "weight": 1.0
+  },
+  {
+    "keyword": "wieczny odpoczynek",
+    "weight": 1.5
+  },
+  {
+    "keyword": "światłość wiekuista",
+    "weight": 1.5
+  },
+  {
+    "keyword": "szczęść Boże",
+    "weight": 1.0
+  },
+  {
+    "keyword": "ha, ha, ha",
+    "weight": 1.5
+  },
+  {
+    "keyword": "uuu",
+    "weight": 1.5
+  },
+  {
+    "keyword": "uuuu",
+    "weight": 1.5
+  },
+  {
+    "keyword": "brawo wspaniale",
+    "weight": 2.0
+  },
+  {
+    "keyword": "będzie dobrze",
+    "weight": 1.5
+  },
+  {
+    "keyword": "daj chusteczkę",
+    "weight": 1.5
+  },
+  {
+    "keyword": "nie działa karta",
+    "weight": 1.0
+  },
+  {
+    "keyword": "słabą kartę daliście",
+    "weight": 1.0
+  },
+  {
+    "keyword": "karta nieaktywna",
+    "weight": 1.0
+  },
+  {
+    "keyword": "głos z sali",
+    "weight": 2.5
+  }
 ]

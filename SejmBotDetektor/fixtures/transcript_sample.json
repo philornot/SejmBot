@@ -76,6 +76,28 @@
           },
           "technical": { "api_url": "/sejm/term10/proceedings/1/2023-11-13/transcripts/2" }
         }
+      },
+      {
+        "num": 3,
+        "speaker": { "name": "Jan Kowalski", "is_mp": true, "club": "KO" },
+        "text": "Ten żart był naprawdę śmieszny i pełen humoru.",
+        "start_time": "2023-11-13T12:45:00",
+        "end_time": "2023-11-13T12:46:00",
+        "duration_seconds": 60,
+        "original": {
+          "num": 3,
+          "speaker": { "name": "Jan Kowalski", "function": "Poseł", "club": "KO" },
+          "timing": { "start_datetime": "2023-11-13T12:45:00", "end_datetime": "2023-11-13T12:46:00", "duration_seconds": 60 },
+          "content": {
+            "html_content": "<p>Ten żart był naprawdę śmieszny i pełen humoru.</p>",
+            "text_content": "Ten żart był naprawdę śmieszny i pełen humoru.",
+            "content_length": 48,
+            "has_content": true,
+            "source": "api_success",
+            "fetched_at": "2025-09-26T00:00:00"
+          },
+          "technical": { "api_url": "/sejm/term10/proceedings/1/2023-11-13/transcripts/3" }
+        }
       }
     ]
   }

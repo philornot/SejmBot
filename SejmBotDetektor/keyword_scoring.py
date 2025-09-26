@@ -22,14 +22,37 @@ import json
 import re
 import unicodedata
 from typing import List, Dict, Any, Union, Iterable
+from pathlib import Path
 
 
 def load_keywords_from_json(path: str) -> List[Dict[str, Any]]:
     """Wczytuje listę słów kluczowych z pliku JSON.
 
     Zwraca listę obiektów {'keyword': str, 'weight': float}.
+    Funkcja jest odporna na uruchomienie z innego katalogu roboczego — jeśli
+    podana ścieżka nie istnieje, spróbuje znaleźć plik w `keywords/keywords.json`
+    obok modułu `SejmBotDetektor`.
     """
-    with open(path, 'r', encoding='utf-8') as fh:
+    # zaakceptuj zarówno string jak i Path
+    p = Path(path)
+    if not p.exists():
+        # spróbuj znaleźć plik obok tego modułu: SejmBotDetektor/keywords/keywords.json
+        module_kw = Path(__file__).resolve().parent / 'keywords' / 'keywords.json'
+        if module_kw.exists():
+            p = module_kw
+        else:
+            # Dodatkowa próba: jeśli użytkownik podał względną ścieżkę typu
+            # 'SejmBotDetektor/keywords/keywords.json' uruchomioną z innego miejsca,
+            # spróbujemy zlokalizować plik względem rodzica modułu (repo root).
+            repo_try = Path(__file__).resolve().parents[1] / 'SejmBotDetektor' / 'keywords' / 'keywords.json'
+            if repo_try.exists():
+                p = repo_try
+            else:
+                raise FileNotFoundError(
+                    f"Nie znaleziono pliku keywords.json pod '{path}'. Przeszukano także: '{module_kw}' i '{repo_try}'."
+                )
+
+    with open(p, 'r', encoding='utf-8') as fh:
         data = json.load(fh)
     # Minimalna walidacja
     out = []
