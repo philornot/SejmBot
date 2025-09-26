@@ -5,7 +5,7 @@ CLI minimalny szkic — bez implementacji detekcji AI.
 
 import argparse
 from pathlib import Path
-from .config import get_detector_settings
+from SejmBotDetektor.config import get_detector_settings
 
 
 def create_parser():
