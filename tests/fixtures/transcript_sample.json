@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "term": 10,
+    "proceeding_id": 1,
+    "date": "2023-11-13",
+    "generated_at": "2023-11-13T12:00:00"
+  },
+  "statements": [
+    {"num": 1, "name": "Jan Kowalski", "text": "Dzień dobry, chciałbym zabrać głos w tej sprawie."},
+    {"num": 2, "name": "Anna Nowak", "text": "To jest przykład krótkiej wypowiedzi z humorem."},
+    {"num": 3, "name": "Piotr Zieliński", "text": "Kolejna wypowiedź bez szczególnego znaczenia."}
+  ]
+}
