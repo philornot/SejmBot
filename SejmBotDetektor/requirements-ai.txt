@@ -1,0 +1,11 @@
+# AI Integration Dependencies
+# Install with: pip install -r requirements-ai.txt
+
+# OpenAI GPT-4 client (SB-30)
+openai>=1.0.0
+
+# Anthropic Claude client (SB-31)
+anthropic>=0.8.0
+
+# HTTP requests
+requests>=2.31.0
