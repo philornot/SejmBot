@@ -1,6 +1,6 @@
-"""Entry point for SejmBotDetektor - UPDATED with AI evaluation.
-
-Enhanced with AI-powered humor detection (SB-30 through SB-35).
+"""
+Entry point for SejmBotDetektor
+AI-powered humor detection.
 """
 
 import argparse

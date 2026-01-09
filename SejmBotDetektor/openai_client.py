@@ -1,4 +1,4 @@
-"""OpenAI API client for humor evaluation (SB-30).
+"""OpenAI API client for humor evaluation
 
 Uses GPT-4 with optimized prompt for detecting humor in Polish parliamentary statements.
 """
@@ -15,31 +15,20 @@ logger = logging.getLogger(__name__)
 
 
 class OpenAIClient:
-    """Client for OpenAI API humor evaluation (SB-30)."""
+    """Client for OpenAI API humor evaluation"""
+    SYSTEM_PROMPT = """Oceń humor w wypowiedzi sejmowej.
 
-    # Optimized prompt for humor detection (SB-32)
-    SYSTEM_PROMPT = """Jesteś ekspertem od analizy humoru w polskich wystąpieniach sejmowych.
+ŚMIESZNE:
+✓ Żarty, ironia, sarkazm
+✓ Absurdy, wpadki  
+✓ Reakcje sali (śmiech, oklaski)
 
-Twoim zadaniem jest ocenić, czy dany fragment wypowiedzi sejmowej jest śmieszny lub ma potencjał humorystyczny.
+NIE ŚMIESZNE:
+✗ Zwykłe wypowiedzi
+✗ Polemiki polityczne
 
-Kryteria oceny:
-- Celowe żarty, dowcip, ironia, sarkazm
-- Niezamierzona komiczność (wpadki językowe, absurdy)
-- Zabawne sytuacje, kontrast między formą a treścią
-- Nieoczekiwane porównania lub metafory
-- Reakcje sali (oklaski, śmiech, poruszenie)
-
-NIE uznawaj za śmieszne:
-- Zwykłych wypowiedzi merytorycznych
-- Polemik politycznych bez elementu humoru
-- Standardowych procedur sejmowych
-
-Odpowiedz w formacie JSON:
-{
-  "is_funny": true/false,
-  "confidence": 0.0-1.0,
-  "reason": "krótkie wyjaśnienie"
-}"""
+Odpowiedz JSON (bez preambuły):
+{"is_funny": true/false, "confidence": 0.0-1.0, "reason": "krótko"}"""
 
     def __init__(self, api_key: str, model: str = 'gpt-4o-mini'):
         """Initialize OpenAI client.
@@ -68,7 +57,7 @@ Odpowiedz w formacie JSON:
         if not self.api_key:
             raise ValueError("OpenAI API key not configured")
 
-        # Build user message with context
+        # Build user message (keep it short)
         user_message = self._build_message(text, context)
 
         # Call OpenAI API
@@ -86,7 +75,7 @@ Odpowiedz w formacie JSON:
                         {'role': 'user', 'content': user_message}
                     ],
                     'temperature': 0.3,  # Lower for more consistent results
-                    'max_tokens': 200,
+                    'max_tokens': 150,  # Short response = cheaper
                     'response_format': {'type': 'json_object'}  # Enforce JSON response
                 },
                 timeout=30
@@ -114,24 +103,23 @@ Odpowiedz w formacie JSON:
                 exc_info=True
             )
             raise
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.error(
+                "Failed to parse OpenAI response: %s | response=%s",
+                e, data.get('choices', [{}])[0].get('message', {}).get('content', '')[:200],
+                exc_info=True
+            )
+            raise
 
+    @staticmethod
+    def _build_message(text: str, context: Optional[Dict]) -> str:
+        """Build user message with minimal context (shorter = cheaper)."""
+        message = f"Wypowiedź:\n{text}"
 
-def _build_message(self, text: str, context: Optional[Dict]) -> str:
-    """Build user message with optional context."""
-    message = f"Oceń, czy ta wypowiedź jest śmieszna:\n\n{text}"
+        if context:
+            # Add only essential context
+            speaker = context.get('speaker', {})
+            if isinstance(speaker, dict) and speaker.get('name'):
+                message += f"\nMówca: {speaker['name']}"
 
-    if context:
-        # Add speaker if available
-        speaker = context.get('speaker', {})
-        if isinstance(speaker, dict) and speaker.get('name'):
-            message += f"\n\nMówca: {speaker['name']}"
-            if speaker.get('club'):
-                message += f" ({speaker['club']})"
-
-        # Add matched keywords as hint
-        keywords = context.get('matched_keywords', [])
-        if keywords:
-            kw_list = ', '.join(k.get('keyword', '') for k in keywords if k.get('keyword'))
-            message += f"\n\nWykryte słowa-klucze: {kw_list}"
-
-    return message
+        return message

@@ -1,19 +1,5 @@
-"""AI Evaluator for humor detection in parliamentary statements.
-
-Integrates OpenAI and Claude APIs to evaluate if statement fragments are funny.
-
-Features (implements 6 Jira tasks):
-- SB-30: OpenAI GPT-4 client integration
-- SB-31: Claude Sonnet client integration
-- SB-32: Optimized prompts for Polish humor detection
-- SB-33: Automatic fallback between APIs
-- SB-34: Rate limiting and retry logic with exponential backoff
-- SB-35: Persistent cache for evaluated fragments
-
-Usage:
-    evaluator = AIEvaluator()
-    result = evaluator.evaluate_fragment("Jakiś tekst do oceny")
-    print(f"Śmieszne: {result.is_funny}, Pewność: {result.confidence}")
+"""
+AI Evaluator for humor detection
 """
 
 import hashlib
@@ -34,7 +20,7 @@ class EvaluationResult:
     is_funny: bool
     confidence: float  # 0.0 - 1.0
     reason: str
-    api_used: Literal['openai', 'claude']
+    api_used: Literal['openai', 'claude', 'gemini', 'none']
     cached: bool = False
     evaluated_at: str = None
 
@@ -44,42 +30,31 @@ class EvaluationResult:
 
 
 class AIEvaluator:
-    """Main orchestrator for AI-powered humor evaluation.
-
-    Handles:
-    - SB-30: OpenAI client integration
-    - SB-31: Claude client integration
-    - SB-32: Optimized humor detection prompts
-    - SB-33: Fallback system between APIs
-    - SB-34: Rate limiting and error handling
-    - SB-35: Cache system for repeated fragments
-    """
+    """Main orchestrator for AI-powered humor evaluation - OPTIMIZED"""
 
     def __init__(self, config: Optional[Dict] = None):
-        """Initialize AI evaluator with optional config.
-
-        Args:
-            config: Configuration dict with API keys and settings
-        """
+        """Initialize AI evaluator with optional config."""
         self.config = config or self._load_config()
 
         # Initialize API clients lazily
         self._openai_client = None
         self._claude_client = None
+        self._gemini_client = None
 
-        # Cache setup (SB-35)
+        # Cache setup
         cache_dir = Path(self.config.get('cache_dir', 'data/ai_cache'))
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_file = cache_dir / 'evaluations.json'
         self.cache = self._load_cache()
 
-        # Rate limiting (SB-34)
+        # Rate limiting 
         self.rate_limits = {
             'openai': {'calls': 0, 'reset_time': time.time(), 'max_per_minute': 50},
-            'claude': {'calls': 0, 'reset_time': time.time(), 'max_per_minute': 40}
+            'claude': {'calls': 0, 'reset_time': time.time(), 'max_per_minute': 40},
+            'gemini': {'calls': 0, 'reset_time': time.time(), 'max_per_minute': 60}  # Gemini is generous
         }
 
-        logger.info("AI Evaluator initialized")
+        logger.info("AI Evaluator initialized (with Gemini support)")
 
     @staticmethod
     def _load_config() -> Dict:
@@ -88,9 +63,11 @@ class AIEvaluator:
         return {
             'openai_api_key': os.getenv('OPENAI_API_KEY'),
             'anthropic_api_key': os.getenv('ANTHROPIC_API_KEY'),
+            'gemini_api_key': os.getenv('GEMINI_API_KEY'),
             'openai_model': os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
             'claude_model': os.getenv('CLAUDE_MODEL', 'claude-sonnet-4-20250514'),
-            'primary_api': os.getenv('PRIMARY_AI_API', 'openai'),
+            'gemini_model': os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-lite'),
+            'primary_api': os.getenv('PRIMARY_AI_API', 'gemini'),  # FREE first
             'cache_dir': os.getenv('AI_CACHE_DIR', 'data/ai_cache'),
             'max_retries': int(os.getenv('AI_MAX_RETRIES', '2')),
         }
@@ -118,10 +95,13 @@ class AIEvaluator:
     @staticmethod
     def _get_cache_key(text: str) -> str:
         """Generate cache key from text hash."""
-        return hashlib.sha256(text.encode('utf-8')).hexdigest()
+        # Normalize text for better deduplication
+        normalized = text.lower().strip()
+        normalized = ' '.join(normalized.split())  # Normalize whitespace
+        return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
 
     def _check_cache(self, text: str) -> Optional[EvaluationResult]:
-        """Check if evaluation exists in cache (SB-35)."""
+        """Check if evaluation exists in cache ."""
         key = self._get_cache_key(text)
         if key in self.cache:
             cached_data = self.cache[key]
@@ -141,7 +121,7 @@ class AIEvaluator:
             self._save_cache()
 
     def _check_rate_limit(self, api: str) -> bool:
-        """Check if we can make API call within rate limits (SB-34)."""
+        """Check if we can make API call within rate limits ."""
         limit_info = self.rate_limits[api]
         current_time = time.time()
 
@@ -170,7 +150,7 @@ class AIEvaluator:
 
     @property
     def openai_client(self):
-        """Lazy initialization of OpenAI client (SB-30)."""
+        """Lazy initialization of OpenAI client."""
         if self._openai_client is None:
             from .openai_client import OpenAIClient
             self._openai_client = OpenAIClient(
@@ -181,7 +161,7 @@ class AIEvaluator:
 
     @property
     def claude_client(self):
-        """Lazy initialization of Claude client (SB-31)."""
+        """Lazy initialization of Claude client."""
         if self._claude_client is None:
             from .claude_client import ClaudeClient
             self._claude_client = ClaudeClient(
@@ -190,10 +170,23 @@ class AIEvaluator:
             )
         return self._claude_client
 
+    @property
+    def gemini_client(self):
+        """Lazy initialization of Gemini client (FREE)."""
+        if self._gemini_client is None:
+            from .gemini_client import GeminiClient
+            self._gemini_client = GeminiClient(
+                api_key=self.config['gemini_api_key'],
+                model=self.config['gemini_model']
+            )
+        return self._gemini_client
+
     def evaluate_fragment(self, text: str, context: Optional[Dict] = None) -> EvaluationResult:
         """Evaluate if a fragment is funny using AI.
 
-        Implements SB-33 fallback: tries primary API, falls back to secondary.
+        Implements smart fallback :
+        1. Try FREE option (Gemini) first
+        2. Fall back to paid options if needed
 
         Args:
             text: Fragment text to evaluate
@@ -202,32 +195,44 @@ class AIEvaluator:
         Returns:
             EvaluationResult with is_funny, confidence, reason
         """
-        # Check cache first (SB-35)
+        # Check cache first 
         cached = self._check_cache(text)
         if cached:
             return cached
 
-        # Determine API order (SB-33 - Fallback system)
+        # Determine API order - FREE first
         primary = self.config['primary_api']
-        apis = ['openai', 'claude'] if primary == 'openai' else ['claude', 'openai']
+
+        # Smart ordering: free -> paid
+        if primary == 'gemini':
+            apis = ['gemini', 'openai', 'claude']
+        elif primary == 'openai':
+            apis = ['openai', 'gemini', 'claude']
+        else:
+            apis = ['claude', 'gemini', 'openai']
 
         last_error = None
 
-        # Try each API with fallback (SB-33)
+        # Try each API with fallback 
         for api_name in apis:
             try:
-                # Check rate limit (SB-34)
+                # Check rate limit 
                 if not self._check_rate_limit(api_name):
                     self._wait_for_rate_limit(api_name)
 
                 # Get appropriate client
-                client = self.openai_client if api_name == 'openai' else self.claude_client
+                if api_name == 'openai':
+                    client = self.openai_client
+                elif api_name == 'claude':
+                    client = self.claude_client
+                else:  # gemini
+                    client = self.gemini_client
 
-                # Evaluate with retry logic (SB-34)
+                # Evaluate with retry logic 
                 result = self._evaluate_with_retry(client, text, context, api_name)
 
                 if result:
-                    # Store in cache (SB-35)
+                    # Store in cache 
                     self._store_in_cache(text, result)
                     return result
 
@@ -236,7 +241,7 @@ class AIEvaluator:
                 last_error = e
                 continue
 
-        # Both APIs failed - return conservative result
+        # All APIs failed - return conservative result
         logger.error(f"All APIs failed. Last error: {last_error}")
         return EvaluationResult(
             is_funny=False,
@@ -248,7 +253,7 @@ class AIEvaluator:
 
     def _evaluate_with_retry(self, client, text: str, context: Optional[Dict],
                              api_name: str) -> Optional[EvaluationResult]:
-        """Evaluate with retry logic (SB-34)."""
+        """Evaluate with retry logic ."""
         max_retries = self.config['max_retries']
 
         for attempt in range(max_retries):
@@ -311,7 +316,7 @@ class AIEvaluator:
             enriched['ai_evaluation'] = asdict(evaluation)
             results.append(enriched)
 
-            # Small delay between API calls
+            # Small delay between API calls (only if not cached)
             if not evaluation.cached:
                 time.sleep(0.5)
 
@@ -328,6 +333,7 @@ class AIEvaluator:
             'cache_file': str(self.cache_file),
             'openai_calls': self.rate_limits['openai']['calls'],
             'claude_calls': self.rate_limits['claude']['calls'],
+            'gemini_calls': self.rate_limits['gemini']['calls'],
             'primary_api': self.config['primary_api'],
         }
 
