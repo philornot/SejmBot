@@ -142,7 +142,7 @@ def demo_fallback():
     print()
 
     # Create evaluator with explicit primary
-    evaluator = AIEvaluator(config={'primary_api': 'openai'})
+    evaluator = AIEvaluator(config={'primary_api': 'ollama'})
 
     text = "Ha, ha, ha! To było dobre! (Oklaski)"
 

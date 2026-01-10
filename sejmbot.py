@@ -1,28 +1,30 @@
 #!/usr/bin/env python3
-"""
-Pełny pipeline: Scraper → Detektor → AI → Raport
-Uruchom: python sejmbot.py
-"""
+"""Pipeline: Scraper → Detektor → AI → Raport"""
 
 import sys
 import logging
 from pathlib import Path
 from datetime import datetime
+from dotenv import load_dotenv  # ← Dodaj to
 
-# Setup
+# Załaduj .env PRZED importami
+load_dotenv()  # ← Szuka .env w CWD
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Stała: katalog danych
+DATA_DIR = 'data_sejm'
+
 
 def main():
-    """Główny pipeline"""
-
-    # 1. SCRAPER - pobierz najnowsze transkrypty
+    # 1. SCRAPER
     logger.info("=== KROK 1: POBIERANIE TRANSKRYPTÓW ===")
     from SejmBotScraper.core import create_scraper
 
     scraper = create_scraper({
-        'max_proceedings': 1,  # Tylko najnowsze posiedzenie
+        'storage': {'base_directory': DATA_DIR},
+        'max_proceedings': 1,
         'fetch_full_statements': True
     })
 
@@ -32,19 +34,20 @@ def main():
         fetch_full_statements=True
     )
 
-    logger.info(f"Pobrano {stats.get('statements_with_full_content', 0)} wypowiedzi z treścią")
+    logger.info(f"Pobrano {stats.get('statements_with_full_content', 0)} wypowiedzi")
 
     if stats.get('statements_with_full_content', 0) == 0:
-        logger.warning("Brak nowych wypowiedzi - koniec")
+        logger.warning("Brak nowych wypowiedzi")
         return
 
-    # 2. DETEKTOR - znajdź śmieszne fragmenty
-    logger.info("=== KROK 2: WYKRYWANIE FRAGMENTÓW ===")
+    # 2. DETEKTOR + AI
+    logger.info("=== KROK 2: WYKRYWANIE + AI ===")
     from SejmBotDetektor.main import main as detector_main
 
-    # Uruchom detektor z AI
     sys.argv = [
         'detector',
+        '--input-dir', DATA_DIR,
+        '--output-dir', DATA_DIR,
         '--ai-evaluate',
         '--ai-min-score', '2.0',
         '--top-n', '50'
@@ -52,51 +55,42 @@ def main():
 
     detector_main()
 
-    # 3. RAPORT - znajdź najnowszy plik z wynikami
-    logger.info("=== KROK 3: GENEROWANIE RAPORTU ===")
+    # 3. RAPORT
+    logger.info("=== KROK 3: RAPORT ===")
 
-    detector_results = Path('data/detector_results')
-    if not detector_results.exists():
-        logger.error("Brak wyników detektora")
-        return
+    results_dir = Path(DATA_DIR) / 'detector_results'
+    results_files = sorted(results_dir.glob('results_*.json'), key=lambda p: p.stat().st_mtime)
 
-    # Znajdź najnowszy plik
-    results_files = sorted(detector_results.glob('results_*.json'), key=lambda p: p.stat().st_mtime)
     if not results_files:
-        logger.error("Brak plików z wynikami")
+        logger.error("Brak wyników")
         return
 
     latest = results_files[-1]
-    logger.info(f"Najnowszy plik wyników: {latest}")
 
-    # Wczytaj i filtruj śmieszne
     import json
     with open(latest, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    funny_fragments = [
-        f for f in data.get('fragments', [])
-        if f.get('ai_evaluation', {}).get('is_funny', False)
-    ]
+    funny = [f for f in data.get('fragments', [])
+             if f.get('ai_evaluation', {}).get('is_funny')]
 
-    # Generuj prosty raport
-    report_path = Path('data/reports') / f'raport_{datetime.now():%Y%m%d_%H%M%S}.txt'
+    # Raport TXT
+    report_path = Path('data_sejm/reports') / f'raport_{datetime.now():%Y%m%d_%H%M%S}.txt'
     report_path.parent.mkdir(exist_ok=True)
 
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(f"RAPORT ŚMIESZNYCH FRAGMENTÓW\n")
         f.write(f"Data: {datetime.now():%Y-%m-%d %H:%M}\n")
-        f.write(f"Znaleziono: {len(funny_fragments)} fragmentów\n")
+        f.write(f"Znaleziono: {len(funny)}/{len(data.get('fragments', []))}\n")
         f.write("=" * 80 + "\n\n")
 
-        for i, frag in enumerate(funny_fragments[:10], 1):  # Top 10
-            eval_data = frag.get('ai_evaluation', {})
-            f.write(f"{i}. FRAGMENT (pewność: {eval_data.get('confidence', 0):.0%})\n")
-            f.write(f"   {frag.get('text', '')[:200]}...\n")
-            f.write(f"   Powód: {eval_data.get('reason', 'brak')}\n\n")
+        for i, frag in enumerate(funny[:10], 1):
+            ev = frag.get('ai_evaluation', {})
+            f.write(f"{i}. [{ev.get('confidence', 0):.0%}] {frag.get('text', '')[:150]}...\n")
+            f.write(f"   → {ev.get('reason', '')}\n\n")
 
-    logger.info(f"✅ Raport zapisany: {report_path}")
-    logger.info(f"✅ Znaleziono {len(funny_fragments)} śmiesznych fragmentów")
+    logger.info(f"✅ Raport: {report_path}")
+    logger.info(f"✅ Śmieszne: {len(funny)}")
 
 
 if __name__ == '__main__':

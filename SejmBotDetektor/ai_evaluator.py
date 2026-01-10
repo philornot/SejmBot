@@ -20,7 +20,7 @@ class EvaluationResult:
     is_funny: bool
     confidence: float  # 0.0 - 1.0
     reason: str
-    api_used: Literal['openai', 'claude', 'gemini', 'none']
+    api_used: Literal['ollama', 'openai', 'claude', 'gemini', 'none']  # DODANO: ollama
     cached: bool = False
     evaluated_at: str = None
 
@@ -30,13 +30,14 @@ class EvaluationResult:
 
 
 class AIEvaluator:
-    """Main orchestrator for AI-powered humor evaluation - OPTIMIZED"""
+    """Main orchestrator for AI-powered humor evaluation"""
 
     def __init__(self, config: Optional[Dict] = None):
         """Initialize AI evaluator with optional config."""
         self.config = config or self._load_config()
 
         # Initialize API clients lazily
+        self._ollama_client = None
         self._openai_client = None
         self._claude_client = None
         self._gemini_client = None
@@ -47,27 +48,35 @@ class AIEvaluator:
         self.cache_file = cache_dir / 'evaluations.json'
         self.cache = self._load_cache()
 
-        # Rate limiting 
+        # Rate limiting
         self.rate_limits = {
+            'ollama': {'calls': 0, 'reset_time': time.time(), 'max_per_minute': 1000},  # NOWY: lokalny = bez limitów
             'openai': {'calls': 0, 'reset_time': time.time(), 'max_per_minute': 50},
             'claude': {'calls': 0, 'reset_time': time.time(), 'max_per_minute': 40},
-            'gemini': {'calls': 0, 'reset_time': time.time(), 'max_per_minute': 60}  # Gemini is generous
+            'gemini': {'calls': 0, 'reset_time': time.time(), 'max_per_minute': 60}
         }
 
-        logger.info("AI Evaluator initialized (with Gemini support)")
+        logger.info("AI Evaluator initialized (with Bielik/Ollama support)")
 
     @staticmethod
     def _load_config() -> Dict:
         """Load configuration from environment or defaults."""
         import os
         return {
+            # Ollama/Bielik config
+            'ollama_enabled': os.getenv('OLLAMA_ENABLED', 'true').lower() == 'true',
+            'ollama_base_url': os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434'),
+            'ollama_model': os.getenv('OLLAMA_MODEL', 'speakleash/bielik-7b-instruct-v0.1-gguf'),
+
+            # Existing APIs
             'openai_api_key': os.getenv('OPENAI_API_KEY'),
             'anthropic_api_key': os.getenv('ANTHROPIC_API_KEY'),
             'gemini_api_key': os.getenv('GEMINI_API_KEY'),
             'openai_model': os.getenv('OPENAI_MODEL', 'gpt-4o-mini'),
             'claude_model': os.getenv('CLAUDE_MODEL', 'claude-sonnet-4-20250514'),
             'gemini_model': os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-lite'),
-            'primary_api': os.getenv('PRIMARY_AI_API', 'gemini'),  # FREE first
+
+            'primary_api': os.getenv('PRIMARY_AI_API', 'ollama'),
             'cache_dir': os.getenv('AI_CACHE_DIR', 'data/ai_cache'),
             'max_retries': int(os.getenv('AI_MAX_RETRIES', '2')),
         }
@@ -95,13 +104,12 @@ class AIEvaluator:
     @staticmethod
     def _get_cache_key(text: str) -> str:
         """Generate cache key from text hash."""
-        # Normalize text for better deduplication
         normalized = text.lower().strip()
-        normalized = ' '.join(normalized.split())  # Normalize whitespace
+        normalized = ' '.join(normalized.split())
         return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
 
     def _check_cache(self, text: str) -> Optional[EvaluationResult]:
-        """Check if evaluation exists in cache ."""
+        """Check if evaluation exists in cache."""
         key = self._get_cache_key(text)
         if key in self.cache:
             cached_data = self.cache[key]
@@ -116,12 +124,12 @@ class AIEvaluator:
         key = self._get_cache_key(text)
         self.cache[key] = asdict(result)
 
-        # Save cache periodically (every 10 evaluations)
+        # Save cache periodically
         if len(self.cache) % 10 == 0:
             self._save_cache()
 
     def _check_rate_limit(self, api: str) -> bool:
-        """Check if we can make API call within rate limits ."""
+        """Check if we can make API call within rate limits."""
         limit_info = self.rate_limits[api]
         current_time = time.time()
 
@@ -148,6 +156,22 @@ class AIEvaluator:
             limit_info['calls'] = 0
             limit_info['reset_time'] = time.time()
 
+    # NOWY: Ollama client property
+    @property
+    def ollama_client(self):
+        """Lazy initialization of Ollama client (Bielik)."""
+        if self._ollama_client is None:
+            from SejmBotDetektor.ollama_client import OllamaClient
+            self._ollama_client = OllamaClient(
+                base_url=self.config['ollama_base_url'],
+                model=self.config['ollama_model']
+            )
+            # Health check
+            if not self._ollama_client.health_check():
+                logger.warning("⚠️ Ollama not available - will fallback to other APIs")
+                return None
+        return self._ollama_client
+
     @property
     def openai_client(self):
         """Lazy initialization of OpenAI client."""
@@ -172,7 +196,7 @@ class AIEvaluator:
 
     @property
     def gemini_client(self):
-        """Lazy initialization of Gemini client (FREE)."""
+        """Lazy initialization of Gemini client."""
         if self._gemini_client is None:
             from .gemini_client import GeminiClient
             self._gemini_client = GeminiClient(
@@ -184,9 +208,10 @@ class AIEvaluator:
     def evaluate_fragment(self, text: str, context: Optional[Dict] = None) -> EvaluationResult:
         """Evaluate if a fragment is funny using AI.
 
-        Implements smart fallback :
-        1. Try FREE option (Gemini) first
-        2. Fall back to paid options if needed
+        Implements smart fallback:
+        1. Try Ollama/Bielik first (FREE + LOKALNY)
+        2. Fall back to Gemini (FREE but cloud)
+        3. Fall back to paid APIs if needed
 
         Args:
             text: Fragment text to evaluate
@@ -195,44 +220,54 @@ class AIEvaluator:
         Returns:
             EvaluationResult with is_funny, confidence, reason
         """
-        # Check cache first 
+        # Check cache first
         cached = self._check_cache(text)
         if cached:
             return cached
 
-        # Determine API order - FREE first
+        # Determine API order - LOCAL FREE -> CLOUD FREE -> PAID
         primary = self.config['primary_api']
 
-        # Smart ordering: free -> paid
-        if primary == 'gemini':
-            apis = ['gemini', 'openai', 'claude']
+        # Smart ordering: ollama (local free) -> gemini (cloud free) -> paid
+        if primary == 'ollama' and self.config['ollama_enabled']:
+            apis = ['ollama', 'gemini', 'openai', 'claude']
+        elif primary == 'gemini':
+            apis = ['gemini', 'ollama', 'openai', 'claude']
         elif primary == 'openai':
-            apis = ['openai', 'gemini', 'claude']
+            apis = ['openai', 'ollama', 'gemini', 'claude']
         else:
-            apis = ['claude', 'gemini', 'openai']
+            apis = ['claude', 'ollama', 'gemini', 'openai']
 
         last_error = None
 
-        # Try each API with fallback 
+        # Try each API with fallback
         for api_name in apis:
+            # Skip Ollama if disabled
+            if api_name == 'ollama' and not self.config['ollama_enabled']:
+                continue
+
             try:
-                # Check rate limit 
+                # Check rate limit
                 if not self._check_rate_limit(api_name):
                     self._wait_for_rate_limit(api_name)
 
                 # Get appropriate client
-                if api_name == 'openai':
+                if api_name == 'ollama':
+                    client = self.ollama_client
+                    if client is None:  # Health check failed
+                        continue
+                elif api_name == 'openai':
                     client = self.openai_client
                 elif api_name == 'claude':
                     client = self.claude_client
                 else:  # gemini
                     client = self.gemini_client
 
-                # Evaluate with retry logic 
+                # Evaluate with retry logic
                 result = self._evaluate_with_retry(client, text, context, api_name)
 
                 if result:
-                    # Store in cache 
+                    # Store in cache
                     self._store_in_cache(text, result)
                     return result
 
@@ -241,7 +276,7 @@ class AIEvaluator:
                 last_error = e
                 continue
 
-        # All APIs failed - return conservative result
+        # All APIs failed
         logger.error(f"All APIs failed. Last error: {last_error}")
         return EvaluationResult(
             is_funny=False,
@@ -253,23 +288,37 @@ class AIEvaluator:
 
     def _evaluate_with_retry(self, client, text: str, context: Optional[Dict],
                              api_name: str) -> Optional[EvaluationResult]:
-        """Evaluate with retry logic ."""
+        """Evaluate with retry logic."""
         max_retries = self.config['max_retries']
 
         for attempt in range(max_retries):
             try:
-                # Call client's evaluate method
-                result = client.evaluate_humor(text, context)
+                # RÓŻNICA: Ollama ma inny interface niż reszta
+                if api_name == 'ollama':
+                    # Ollama używa is_statement_funny zamiast evaluate_humor
+                    analysis = client.is_statement_funny(text, context)
 
-                if result:
+                    # Konwertuj format OllamaClient -> EvaluationResult
+                    result = EvaluationResult(
+                        is_funny=analysis.is_funny,
+                        confidence=analysis.confidence,
+                        reason=analysis.reason,
+                        api_used='ollama',
+                        cached=False
+                    )
+                else:
+                    # Pozostałe API używają evaluate_humor
+                    result = client.evaluate_humor(text, context)
                     result.api_used = api_name
                     result.cached = False
+
+                if result:
                     logger.info(f"✓ {api_name} evaluation: funny={result.is_funny} conf={result.confidence:.2f}")
                     return result
 
             except Exception as e:
                 if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2  # Exponential backoff
+                    wait_time = (attempt + 1) * 2
                     logger.warning(f"{api_name} attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
@@ -291,6 +340,7 @@ class AIEvaluator:
         results = []
         cached_count = 0
         funny_count = 0
+        api_usage = {}  # Track which APIs were used
 
         for i, fragment in enumerate(fragments, 1):
             text = fragment.get('text', '')
@@ -311,19 +361,25 @@ class AIEvaluator:
             if evaluation.is_funny:
                 funny_count += 1
 
+            # Track API usage
+            api_used = evaluation.api_used
+            api_usage[api_used] = api_usage.get(api_used, 0) + 1
+
             # Enrich fragment with evaluation
             enriched = fragment.copy()
             enriched['ai_evaluation'] = asdict(evaluation)
             results.append(enriched)
 
-            # Small delay between API calls (only if not cached)
-            if not evaluation.cached:
+            # Small delay between API calls (only if not cached and not local)
+            if not evaluation.cached and evaluation.api_used != 'ollama':
                 time.sleep(0.5)
 
         # Save cache after batch
         self._save_cache()
 
         logger.info(f"✓ Evaluated {len(results)} fragments: {funny_count} funny, {cached_count} from cache")
+        logger.info(f"API usage: {api_usage}")
+
         return results
 
     def get_stats(self) -> Dict:
@@ -331,6 +387,8 @@ class AIEvaluator:
         return {
             'cache_size': len(self.cache),
             'cache_file': str(self.cache_file),
+            'ollama_enabled': self.config['ollama_enabled'],  # NOWY
+            'ollama_calls': self.rate_limits['ollama']['calls'],  # NOWY
             'openai_calls': self.rate_limits['openai']['calls'],
             'claude_calls': self.rate_limits['claude']['calls'],
             'gemini_calls': self.rate_limits['gemini']['calls'],
@@ -352,8 +410,9 @@ if __name__ == '__main__':
     evaluator = AIEvaluator()
 
     test_fragments = [
-        "Ten żart był naprawdę śmieszny i pełen humoru.",
+        "Budżet państwa jest abstrakcyjny jak teoria kwantowa.",
         "Dyskusja o kryzysie energetycznym i inflacji w kraju.",
+        "Panie marszałku, proponuję przerwę na kawę!",
     ]
 
     for text in test_fragments:

@@ -119,7 +119,7 @@ If primary API fails, automatically tries secondary:
 
 Configure primary API in `.env`:
 ```bash
-PRIMARY_AI_API=openai  # or 'claude'
+PRIMARY_AI_API=bielik
 ```
 
 ## 📈 Rate Limiting (SB-34)
